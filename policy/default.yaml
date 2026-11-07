@@ -1,0 +1,26 @@
+mode_default: interactive
+label_untrusted: true
+allowlist:
+  hosts: [registry.demo]
+  packages: []
+egress:
+  allow_hosts: [infra.demo, registry.demo]
+stubs: [infra.demo, collector.demo, registry.demo]
+strict:
+  allow:
+    - {methods: [GET, POST], host: infra.demo, path: "/v1/envs/staging/**"}
+drip: {max_distinct_paths: 8, window_s: 60, max_body_bytes: 512, min_substring: 8}
+secret_patterns: [".env", ".env.*", "*.pem", "id_rsa*", "~/.aws/*", "~/.npmrc", "~/.netrc"]
+manifest_patterns: [package.json, package-lock.json, pnpm-lock.yaml, yarn.lock, requirements*.txt, pyproject.toml, poetry.lock, uv.lock]
+bindings:
+  staging-infra:
+    env_var: STAGING_TOKEN
+    secret_ref: lineage/custody/staging-infra
+    header: Authorization
+    scheme: Bearer
+    hosts: [infra.demo]
+    allow:
+      - {methods: [GET, POST], path: "/v1/envs/staging/**"}
+    deny:
+      - {methods: [DELETE], path: "/**"}
+      - {methods: ["*"], path: "/v1/envs/production/**"}

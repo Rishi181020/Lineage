@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "errortrack": {
+      "command": "python3",
+      "args": ["/etc/lineage/errortrack_mcp.py"]
+    }
+  }
+}

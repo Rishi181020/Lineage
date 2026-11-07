@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lineage</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">Lineage</div>
+    <p class="tag">Ask why an action happens — not only where it goes.</p>
+    <label class="token">Operator token <input id="token" type="password" placeholder="lineage-operator-dev" /></label>
+  </header>
+  <main>
+    <section id="runs">
+      <h2>Runs</h2>
+      <div id="run-list"></div>
+    </section>
+    <section id="trifecta">
+      <h2>Trifecta</h2>
+      <div class="lights">
+        <span id="leg-untrusted" class="light">untrusted</span>
+        <span id="leg-private" class="light">private</span>
+        <span id="leg-external" class="light">external</span>
+        <span id="strict" class="badge">STRICT</span>
+      </div>
+    </section>
+    <section id="feed">
+      <h2>Live feed</h2>
+      <div id="events"></div>
+    </section>
+    <section id="chain">
+      <h2>Chain</h2>
+      <pre id="chain-view">Select a verdict.</pre>
+    </section>
+    <section id="custody">
+      <h2>Custody</h2>
+      <pre id="custody-view">No run selected.</pre>
+    </section>
+    <section id="attacker">
+      <h2>Attacker's view</h2>
+      <pre id="attacker-view">collector.demo received: (poll after tripwire)</pre>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

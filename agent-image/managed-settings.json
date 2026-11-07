@@ -1,0 +1,70 @@
+{
+  "env": {
+    "CLAUDE_CODE_USE_BEDROCK": "1",
+    "ANTHROPIC_BEDROCK_BASE_URL": "http://modeltap:8100",
+    "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
+    "HTTP_PROXY": "http://egress:8080",
+    "HTTPS_PROXY": "http://egress:8080",
+    "NO_PROXY": "control,modeltap",
+    "NODE_EXTRA_CA_CERTS": "/etc/lineage/mitm-ca.pem",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  },
+  "skipWebFetchPreflight": true,
+  "allowManagedHooksOnly": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/lineage-hook",
+            "args": ["session-start"],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/lineage-hook",
+            "args": ["user-prompt"],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/lineage-hook",
+            "args": ["pre"],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/lineage-hook",
+            "args": ["post"],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}

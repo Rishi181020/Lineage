@@ -1,0 +1,6 @@
+{
+  "app": "python app.py",
+  "context": {
+    "region": "us-west-2"
+  }
+}

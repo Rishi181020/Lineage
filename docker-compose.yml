@@ -1,0 +1,143 @@
+name: lineage
+
+x-python-healthcheck: &python-healthcheck
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+  interval: 5s
+  timeout: 3s
+  retries: 10
+  start_period: 3s
+
+services:
+  control:
+    build:
+      context: .
+      dockerfile: control/Dockerfile
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      LINEAGE_REGION: ${LINEAGE_REGION:-us-west-2}
+      LINEAGE_MODE: local
+      LINEAGE_POLICY_PATH: /app/policy/default.yaml
+      LINEAGE_LOCAL_SECRETS_PATH: /app/.lineage/secrets.yaml
+      LINEAGE_OPERATOR_TOKEN_PATH: /app/.lineage/operator-token
+      LINEAGE_SERVICE_TOKEN_PATH: /app/.lineage/service-token
+      LINEAGE_OPERATOR_TOKEN: ${LINEAGE_OPERATOR_TOKEN:-lineage-operator-dev}
+      LINEAGE_SERVICE_TOKEN: ${LINEAGE_SERVICE_TOKEN:-lineage-service-dev}
+      LINEAGE_LOCAL_SIGNING_KEY: ${LINEAGE_LOCAL_SIGNING_KEY:-lineage-local-development-key-32b!}
+    volumes:
+      - ./.lineage:/app/.lineage
+      - ./policy:/app/policy:ro
+    networks:
+      sandbox:
+        ipv4_address: 172.30.0.10
+      uplink: {}
+    healthcheck: *python-healthcheck
+
+  egress:
+    build:
+      context: .
+      dockerfile: egress/Dockerfile
+    environment:
+      LINEAGE_CONTROL_INTERNAL: http://172.30.0.10:8002
+      LINEAGE_SERVICE_TOKEN: ${LINEAGE_SERVICE_TOKEN:-lineage-service-dev}
+      LINEAGE_POLICY_PATH: /app/policy/default.yaml
+      LINEAGE_LOCAL_SECRETS_PATH: /app/.lineage/secrets.yaml
+      STAGING_REAL_TOKEN: ${STAGING_REAL_TOKEN:-lineage_demo_real_staging_token}
+    volumes:
+      - ./.lineage:/app/.lineage:ro
+      - ./policy:/app/policy:ro
+    networks:
+      sandbox:
+        ipv4_address: 172.30.0.11
+      uplink: {}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  modeltap:
+    build:
+      context: .
+      dockerfile: modeltap/Dockerfile
+    environment:
+      LINEAGE_REGION: ${LINEAGE_REGION:-us-west-2}
+      LINEAGE_MODE: ${LINEAGE_MODE:-local}
+      LINEAGE_CONTROL_INTERNAL: http://172.30.0.10:8002
+      LINEAGE_SERVICE_TOKEN: ${LINEAGE_SERVICE_TOKEN:-lineage-service-dev}
+      LINEAGE_LOCAL_SIGNING_KEY: ${LINEAGE_LOCAL_SIGNING_KEY:-lineage-local-development-key-32b!}
+    networks:
+      sandbox:
+        ipv4_address: 172.30.0.12
+      uplink: {}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  stub-infra:
+    build:
+      context: stubs
+    command: ["uvicorn", "infra.app:app", "--host", "0.0.0.0", "--port", "80"]
+    environment:
+      STAGING_REAL_TOKEN: ${STAGING_REAL_TOKEN:-lineage_demo_real_staging_token}
+    networks:
+      uplink:
+        aliases: [infra.demo]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  stub-collector:
+    build:
+      context: stubs
+    command: ["uvicorn", "collector.app:app", "--host", "0.0.0.0", "--port", "80"]
+    networks:
+      uplink:
+        aliases: [collector.demo]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  stub-registry:
+    build:
+      context: stubs
+    command: ["uvicorn", "registry.app:app", "--host", "0.0.0.0", "--port", "80"]
+    networks:
+      uplink:
+        aliases: [registry.demo]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  agent-shell:
+    profiles: [tools]
+    build:
+      context: agent-image
+    command: ["sleep", "infinity"]
+    dns: 127.0.0.1
+    extra_hosts:
+      - "control:172.30.0.10"
+      - "egress:172.30.0.11"
+      - "modeltap:172.30.0.12"
+    networks:
+      sandbox: {}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  uplink:
+    driver: bridge
+  sandbox:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

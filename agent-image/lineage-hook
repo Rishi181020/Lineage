@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Fail-closed Claude Code hook client; standard library only."""
+
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+def deny() -> None:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": "Lineage unreachable — failing closed",
+                }
+            }
+        )
+    )
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in {
+        "session-start",
+        "user-prompt",
+        "pre",
+        "post",
+    }:
+        print(
+            "usage: lineage-hook <session-start|user-prompt|pre|post>",
+            file=sys.stderr,
+        )
+        return 2
+    event = sys.argv[1]
+    raw = sys.stdin.buffer.read()
+    capture_dir = os.getenv("LINEAGE_CAPTURE_DIR")
+    if capture_dir:
+        path = Path(capture_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / f"{event}-{time.time_ns()}.json").write_bytes(raw)
+    try:
+        payload = json.loads(raw or b"{}")
+        run_id = os.environ["LINEAGE_RUN_ID"]
+        hook_token = os.environ["LINEAGE_HOOK_TOKEN"]
+        payload["run_id"] = run_id
+        payload["hook_token"] = hook_token
+        request = urllib.request.Request(
+            f"http://control:8000/hooks/{event}",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "X-Lineage-Hook-Token": hook_token,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=8) as response:
+            output = response.read()
+        if output and output.strip() not in {b"", b"{}"}:
+            sys.stdout.buffer.write(output)
+        return 0
+    except Exception as exc:
+        print(f"lineage-hook: {exc}", file=sys.stderr)
+        if event == "pre":
+            deny()
+            return 0
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

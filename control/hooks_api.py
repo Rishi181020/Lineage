@@ -173,6 +173,16 @@ async def _handle_pre(run, payload: dict[str, Any]) -> Response:
     index["_spans"] = state.span_map(current.id)
     index["_manifest_additions"] = state.manifest_additions(current.id)
     verdict = evaluate(current, event, index, state.policy)
+    if current.protection == "baseline" and verdict.rule_id != "K0":
+        # A normal gateway has no view of tool calls. Shown, never enforced.
+        state.publish("verdict", current.id, {
+            "decision": "allow", "rule_id": None, "reason": "", "entities": [], "chain": [],
+            "tool_name": tool, "tool_input": tool_input,
+            "lineage_would_have": verdict.decision.value if verdict.rule_id else None,
+            "lineage_rule": verdict.rule_id,
+            "lineage_reason": verdict.reason,
+        })
+        return Response(content="", media_type="application/json")
     state.publish(
         "verdict",
         current.id,

@@ -26,6 +26,7 @@ BINDINGS = ["staging-infra"]
 class AgentBody(BaseModel):
     task: str = Field(min_length=1, max_length=8000)
     model: str
+    protection: Literal["lineage", "baseline"] = "lineage"
 
 
 class ApprovalBody(BaseModel):
@@ -82,6 +83,7 @@ def start_agent(
         binding_ids=BINDINGS,
         headless=True,
         manifests=_starting_manifests(),
+        protection=body.protection,
     )
     state.publish("run_created", run.id, _public_run(run))
     try:

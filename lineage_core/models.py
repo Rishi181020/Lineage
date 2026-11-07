@@ -102,6 +102,9 @@ class Run(BaseModel):
     token_jti: str = ""
     replay: bool = False
     headless: bool = False
+    # "lineage", or "baseline": a normal allowlist gateway only, for before/after comparisons.
+    # A baseline agent holds the real secrets and its tool calls aren't judged.
+    protection: str = "lineage"
     signal: str = "none"
     legs: dict[str, bool] = Field(
         default_factory=lambda: {

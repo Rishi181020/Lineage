@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -23,6 +23,7 @@ class CreateRunBody(BaseModel):
     replay: bool = False
     # The workspace's manifests before the agent starts: {relative path: contents}.
     manifests: dict[str, str] = Field(default_factory=dict)
+    protection: Literal["lineage", "baseline"] = "lineage"
 
 
 class ModeBody(BaseModel):
@@ -55,6 +56,7 @@ def _public_run(run) -> dict[str, Any]:
         "strict": run.strict,
         "replay": run.replay,
         "headless": run.headless,
+        "protection": run.protection,
         "created_at": run.created_at.isoformat(),
     }
 
@@ -74,6 +76,7 @@ def create_run(
             binding_ids=body.bindings,
             replay=body.replay,
             manifests=body.manifests,
+            protection=body.protection,
         )
     except KeyError as exc:
         raise HTTPException(400, str(exc)) from exc

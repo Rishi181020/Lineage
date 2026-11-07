@@ -70,6 +70,13 @@ class ControlState:
             data.update(override)
         return data
 
+    def real_secret(self, secret_ref: str) -> str:
+        """Demo secrets only (see scripts/seed_secrets.py). Matches egress's fallback."""
+        try:
+            return self.secrets.get(secret_ref)
+        except (FileNotFoundError, KeyError, ValueError):
+            return os.environ.get("STAGING_REAL_TOKEN", "lineage_demo_real_staging_token")
+
     def allocate_ip(self) -> str:
         with self.lock:
             for ip in IP_POOL:
@@ -94,7 +101,10 @@ class ControlState:
         replay: bool = False,
         headless: bool = False,
         manifests: dict[str, str] | None = None,
+        protection: str = "lineage",
     ) -> tuple[Run, str, dict[str, str]]:
+        if protection not in {"lineage", "baseline"}:
+            raise ValueError("protection must be lineage or baseline")
         policy_bindings = self.policy.get("bindings", {}) or {}
         bindings: list[Binding] = []
         placeholders = []
@@ -104,8 +114,11 @@ class ControlState:
             if not raw:
                 raise KeyError(f"unknown binding: {binding_id}")
             binding = Binding(id=binding_id, **raw)
-            ph = create_placeholder(binding_id)
             bindings.append(binding)
+            if protection == "baseline":
+                env[binding.env_var] = self.real_secret(binding.secret_ref)
+                continue
+            ph = create_placeholder(binding_id)
             placeholders.append(ph)
             env[binding.env_var] = ph.value
 
@@ -132,6 +145,7 @@ class ControlState:
             token_jti=jti,
             replay=replay,
             headless=headless,
+            protection=protection,
         )
         for binding in bindings:
             for host in binding.hosts:

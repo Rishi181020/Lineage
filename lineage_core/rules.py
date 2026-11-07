@@ -259,7 +259,10 @@ def evaluate(
             _spans(index, record, SourceTier.CHECKED),
         )
 
-    if bool(_get(run, "strict", False)) and classification.network:
+    legs = _get(run, "legs", {}) or {}
+    # An outbound action is itself the "external" leg, so it is strict as soon as the other two are on.
+    strict = bool(_get(run, "strict", False)) or bool(legs.get("untrusted") and legs.get("private"))
+    if strict and classification.network:
         return _verdict(
             Decision.ASK,
             "T1",

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import httpx
 
+from lineage_core.manifests import read_manifests
+
 
 def _operator_token() -> str:
     path = Path(".lineage/operator-token")
@@ -44,6 +46,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "mode": args.mode,
                 "mcp_allow": args.mcp_allow.split(",") if args.mcp_allow else [],
                 "bindings": [args.bind] if args.bind else [],
+                "manifests": read_manifests(args.workspace),
             },
         )
         created.raise_for_status()
@@ -89,7 +92,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "--memory",
         "2g",
         "-v",
-        f"{Path('fixtures/demo-repo').resolve()}:/workspace",
+        f"{Path(args.workspace).resolve()}:/workspace",
         "-w",
         "/workspace",
     ]
@@ -127,6 +130,7 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--bind", default="staging-infra")
     run.add_argument("--control", default="http://127.0.0.1:8001")
     run.add_argument("--image", default="lineage-agent-shell:latest")
+    run.add_argument("--workspace", default="fixtures/demo-repo", help="Project folder the agent works in")
     run.add_argument("--model", default=os.environ.get("ANTHROPIC_MODEL", ""))
     run.add_argument("command", nargs=argparse.REMAINDER)
     run.set_defaults(func=cmd_run)

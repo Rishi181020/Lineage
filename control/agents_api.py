@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from lineage_core.models import RunStatus
 
 from .admin_api import _public_run, _require_operator
+from .attacker_api import current_issues
 from .state import RUNNER_URL, get_state
 
 router = APIRouter(prefix="/admin", tags=["agents"])
@@ -26,6 +27,7 @@ BINDINGS = ["staging-infra"]
 class AgentBody(BaseModel):
     task: str = Field(min_length=1, max_length=8000)
     model: str
+    protection: Literal["lineage", "baseline"] = "lineage"
 
 
 class ApprovalBody(BaseModel):
@@ -54,6 +56,18 @@ def system(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     return {"model": model, "runner": runner}
 
 
+def _starting_manifests() -> dict[str, str]:
+    """Manifests from the runner's read-only copy of the workspace. Without them, nothing in
+    the project's dependency list is trusted, which only means more approval requests."""
+    try:
+        resp = httpx.get(f"{RUNNER_URL}/workspace/manifests", headers=_service_headers(), timeout=10, trust_env=False)
+        resp.raise_for_status()
+        data = resp.json()
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except (httpx.HTTPError, ValueError):
+        return {}
+
+
 @router.post("/agents")
 def start_agent(
     body: AgentBody,
@@ -69,6 +83,8 @@ def start_agent(
         mcp_allow=MCP_ALLOW,
         binding_ids=BINDINGS,
         headless=True,
+        manifests=_starting_manifests(),
+        protection=body.protection,
     )
     state.publish("run_created", run.id, _public_run(run))
     try:
@@ -87,6 +103,8 @@ def start_agent(
                     "ANTHROPIC_MODEL": body.model,
                     "ANTHROPIC_SMALL_FAST_MODEL": body.model,
                 },
+                # What errortrack serves this agent, including anything planted from the attacker console.
+                "issues": current_issues(),
             },
             timeout=30,
             trust_env=False,

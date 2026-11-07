@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import socket
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
@@ -108,11 +110,64 @@ class AgentBody(BaseModel):
     run_id: str
     ip: str
     env: dict[str, str]
+    issues: list[dict] | None = None
+
+
+def _issues_tar(issues: list[dict]) -> bytes:
+    """A tar with /etc/lineage/errortrack_issues.json, root-owned and read-only to the agent.
+
+    Copied in before start rather than passed as an environment variable: `env` output is
+    ordinary workspace content to Lineage, which would let an agent re-read the attacker's
+    text from somewhere that isn't marked untrusted.
+    """
+    import io
+    import json as _json
+    import tarfile
+
+    data = _json.dumps(issues, indent=2).encode()
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        info = tarfile.TarInfo("errortrack_issues.json")
+        info.size, info.mode, info.uid, info.gid = len(data), 0o644, 0, 0
+        tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "workspace": _workspace_source()}
+
+
+MANIFEST_PATTERNS = (
+    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+    "requirements*.txt", "pyproject.toml", "poetry.lock", "uv.lock",
+)
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
+
+
+@app.get("/workspace/manifests")
+def manifests(x_lineage_service_token: str | None = Header(default=None)) -> dict[str, str]:
+    """The workspace's manifests as they are before any agent touches them.
+
+    Control trusts the dependencies these declare. Agents only ever see a copy, so this
+    read-only original is the honest record of what the project asked for.
+    """
+    _auth(x_lineage_service_token)
+    root = Path(WORKSPACE_MOUNT)
+    found: dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        if len(Path(dirpath).relative_to(root).parts) > 4:
+            dirnames[:] = []
+            continue
+        for name in filenames:
+            if not any(fnmatch.fnmatch(name, pat) for pat in MANIFEST_PATTERNS):
+                continue
+            path = Path(dirpath) / name
+            if path.stat().st_size > 2_000_000 or len(found) >= 100:
+                continue
+            found[str(path.relative_to(root))] = path.read_text(encoding="utf-8", errors="replace")
+    return found
 
 
 @app.post("/agents")
@@ -151,6 +206,16 @@ def start(body: AgentBody, x_lineage_service_token: str | None = Header(default=
             if created.status_code >= 400:
                 raise HTTPException(502, created.text[:500])
             container_id = created.json()["Id"]
+            if body.issues is not None:
+                copied = docker.put(
+                    f"/containers/{container_id}/archive",
+                    params={"path": "/etc/lineage"},
+                    content=_issues_tar(body.issues),
+                    headers={"Content-Type": "application/x-tar"},
+                )
+                if copied.status_code >= 400:
+                    docker.delete(f"/containers/{container_id}", params={"force": "true"})
+                    raise HTTPException(502, f"couldn't give the agent its issues: {copied.text[:300]}")
             started = docker.post(f"/containers/{container_id}/start")
             if started.status_code >= 400:
                 docker.delete(f"/containers/{container_id}", params={"force": "true"})

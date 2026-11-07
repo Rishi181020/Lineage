@@ -38,6 +38,8 @@ class Span(BaseModel):
     text: str = ""
     tool_name: str | None = None
     path: str | None = None
+    # False for a "user prompt" nobody can vouch for yet; its names aren't trusted until it is.
+    corroborated: bool = True
     ts: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -49,6 +51,10 @@ class EntityRecord(BaseModel):
 
     def observe(self, tier: SourceTier, span_id: str) -> None:
         self.first_span_by_tier.setdefault(tier, span_id)
+        # A workspace file can't wash an untrusted name: the agent may have written it there.
+        # Only a trusted source (the user, the starting manifests, a binding) raises it.
+        if tier == SourceTier.CHECKED and self.best_tier == SourceTier.UNTRUSTED:
+            return
         if _TIER_RANK[tier] > _TIER_RANK[self.best_tier]:
             self.best_tier = tier
 
@@ -96,6 +102,9 @@ class Run(BaseModel):
     token_jti: str = ""
     replay: bool = False
     headless: bool = False
+    # "lineage", or "baseline": a normal allowlist gateway only, for before/after comparisons.
+    # A baseline agent holds the real secrets and its tool calls aren't judged.
+    protection: str = "lineage"
     signal: str = "none"
     legs: dict[str, bool] = Field(
         default_factory=lambda: {

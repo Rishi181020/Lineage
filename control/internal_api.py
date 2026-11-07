@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from lineage_core.models import RunStatus
+from lineage_core.trifecta import update_legs
 
 from .state import get_state
 
@@ -60,6 +61,8 @@ def by_ip(
         "run_id": run.id,
         "status": run.status.value,
         "strict": run.strict,
+        "legs": run.legs,
+        "protection": run.protection,
         "bindings": [
             {
                 "id": b.id,
@@ -93,10 +96,34 @@ def post_event(
 ) -> dict[str, bool]:
     _require_service(x_lineage_service_token)
     state = get_state()
-    if not state.store.get_run(body.run_id):
+    run = state.store.get_run(body.run_id)
+    if not run:
         raise HTTPException(404, "run not found")
+    if body.type == "egress" and not run.legs.get("external"):
+        # Every egress host is external: model traffic goes through the model tap, not egress.
+        update_legs(run, egress_host=str(body.payload.get("host", "")))
+        state.store.update_run(run.id, legs=run.legs, strict=run.strict)
+        state.publish("legs", run.id, {"legs": run.legs, "strict": run.strict})
     state.publish(body.type, body.run_id, body.payload)
     return {"accepted": True}
+
+
+class ModelRequestBody(BaseModel):
+    user_texts: list[str] = Field(default_factory=list)
+
+
+@router.post("/runs/{run_id}/model-request")
+def model_request(
+    run_id: str,
+    body: ModelRequestBody,
+    x_lineage_service_token: str | None = Header(default=None),
+) -> dict[str, list[str]]:
+    """The model tap reports the user-typed text in each model request (S2 corroboration)."""
+    _require_service(x_lineage_service_token)
+    state = get_state()
+    if not state.store.get_run(run_id):
+        raise HTTPException(404, "run not found")
+    return {"verified": state.corroborate_prompts(run_id, [t[:20_000] for t in body.user_texts[:50]])}
 
 
 @router.post("/runs/{run_id}/kill")

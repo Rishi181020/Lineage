@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import http.client
-import ipaddress
 import json
 import os
 import threading
@@ -14,8 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from lineage_core import bindings as binding_match
-from lineage_core.drip import DripDetector
+from lineage_core import egress_rules
 
 CONTROL = os.environ.get("LINEAGE_CONTROL_INTERNAL", "http://172.30.0.10:8002")
 SERVICE_TOKEN = os.environ.get("LINEAGE_SERVICE_TOKEN", "lineage-service-dev")
@@ -23,7 +21,6 @@ POLICY_PATH = os.environ.get("LINEAGE_POLICY_PATH", "/app/policy/default.yaml")
 
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _cache_lock = threading.Lock()
-_drip = DripDetector()
 _secret_cache: dict[str, str] = {}
 
 
@@ -48,6 +45,7 @@ def _load_policy() -> dict[str, Any]:
 
 
 POLICY = _load_policy()
+_drip = egress_rules.drip_for(POLICY)
 
 
 def _headers() -> dict[str, str]:
@@ -99,19 +97,6 @@ def _kill(run_id: str) -> None:
         pass
 
 
-def _is_private(host: str) -> bool:
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return bool(
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip in ipaddress.ip_network("169.254.0.0/16")
-    )
-
-
 def _real_secret(secret_ref: str) -> str:
     if secret_ref in _secret_cache:
         return _secret_cache[secret_ref]
@@ -130,17 +115,6 @@ def _real_secret(secret_ref: str) -> str:
         value = os.environ.get("STAGING_REAL_TOKEN", "lineage_demo_real_staging_token")
         _secret_cache[secret_ref] = value
         return value
-
-
-def _scan_placeholders(haystacks: list[str], placeholders: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    found = []
-    joined = "\n".join(haystacks)
-    for ph in placeholders:
-        variants = set(ph.get("variants") or [])
-        variants.add(ph["value"])
-        if any(variant and variant in joined for variant in variants):
-            found.append(ph)
-    return found
 
 
 class Proxy(BaseHTTPRequestHandler):
@@ -183,186 +157,40 @@ class Proxy(BaseHTTPRequestHandler):
         path = target.path or "/"
         method = self.command.upper()
         body = self.rfile.read(int(self.headers.get("Content-Length", "0") or 0))
-        body_text = body.decode("utf-8", errors="replace")
 
         run = _lookup_run(self._client_ip())
         if not run:
             self._reply(407, b"Lineage: unknown agent")
             return
         run_id = run["run_id"]
-        if run["status"] in {"revoked", "killed", "stopped", "finished"}:
-            _emit(run_id, "egress_block", {"rule": "K0", "host": host})
-            self._reply(403, f'Lineage K0: run {run_id} is {run["status"]}'.encode())
-            return
 
-        stubs = {str(s).lower() for s in POLICY.get("stubs", [])}
-        if _is_private(host) and host not in stubs:
-            _emit(run_id, "egress_block", {"rule": "E2", "host": host})
-            self._reply(403, b"Lineage E2: private/link-local destination blocked")
-            return
-
-        placeholders = run.get("placeholders_all") or []
-        header_values = [f"{k}: {v}" for k, v in self.headers.items()]
-        found = _scan_placeholders(
-            [self.path, body_text, *header_values], placeholders
+        outcome = egress_rules.decide(
+            run,
+            method=method,
+            host=host,
+            path=path,
+            target=self.path,
+            headers=dict(self.headers.items()),
+            body=body,
+            policy=POLICY,
+            secret_for=_real_secret,
+            drip=_drip,
         )
-
-        # C1 / C2 / custody before E1 so tripwire wins for collector.demo
-        headers = {
-            key: value
-            for key, value in self.headers.items()
-            if key.lower() not in {"proxy-connection", "connection", "host"}
-        }
-        for ph in found:
-            binding = next(
-                (b for b in run.get("bindings", []) if b["id"] == ph["binding_id"]),
-                None,
-            )
-            if not binding:
-                continue
-            in_host = host in {h.lower() for h in binding.get("hosts", [])}
-            placeholder = ph["value"]
-            # Replace in Authorization / declared header when in scope
-            header_name = binding.get("header", "Authorization")
-            scheme = binding.get("scheme", "Bearer")
-            scope_ok = binding_match.scope_allowed(
-                {
-                    "allow": binding.get("scope", {}).get("allow", []),
-                    "deny": binding.get("scope", {}).get("deny", []),
-                    "hosts": binding.get("hosts", []),
-                },
-                method=method,
-                path=path,
-            )
-            if in_host and scope_ok:
-                real = _real_secret(binding["secret_ref"])
-                current = headers.get(header_name, "")
-                if placeholder in current or placeholder in body_text:
-                    if placeholder in current:
-                        headers[header_name] = current.replace(placeholder, real)
-                    if scheme and headers.get(header_name, "").startswith(f"{scheme} "):
-                        pass
-                    elif header_name.lower() == "authorization" and not headers.get(
-                        header_name, ""
-                    ).lower().startswith("bearer "):
-                        headers[header_name] = f"{scheme} {real}"
-                    body_text = body_text.replace(placeholder, real)
-                    body = body_text.encode()
-                    _emit(
-                        run_id,
-                        "custody_attach",
-                        {
-                            "binding_id": binding["id"],
-                            "host": host,
-                            "method": method,
-                            "path": path,
-                        },
-                    )
-            elif in_host and not scope_ok:
-                _emit(
-                    run_id,
-                    "verdict",
-                    {
-                        "decision": "deny",
-                        "rule_id": "C2",
-                        "reason": "Lineage C2: placeholder out of binding scope",
-                        "host": host,
-                        "path": path,
-                    },
-                )
-                self._reply(403, b"Lineage C2: credential out of scope")
-                return
-            else:
-                # Tripwire C1
-                _emit(
-                    run_id,
-                    "tripwire",
-                    {
-                        "rule_id": "C1",
-                        "host": host,
-                        "path": path,
-                        "placeholder_binding": ph["binding_id"],
-                        "redacted_auth": f"{scheme} {placeholder[:20]}…",
-                    },
-                )
-                _kill(run_id)
-                self._reply(403, b"Lineage C1: tripwire - placeholder left its binding")
-                return
-
-        allow_hosts = {
-            str(h).lower() for h in (POLICY.get("egress", {}) or {}).get("allow_hosts", [])
-        }
-        allow_hosts |= {
-            h.lower()
-            for b in run.get("bindings", [])
-            for h in b.get("hosts", [])
-        }
-        if host not in allow_hosts:
-            _emit(run_id, "egress_block", {"rule": "E1", "host": host})
-            self._reply(403, b"Lineage E1: host not allowlisted")
+        for event_type, payload in outcome.events:
+            _emit(run_id, event_type, payload)
+        if outcome.action == "kill":
+            _kill(run_id)
+        if outcome.action != "forward":
+            self._reply(outcome.status, outcome.message.encode())
             return
 
-        if run.get("strict"):
-            allowed = False
-            for rule in (POLICY.get("strict", {}) or {}).get("allow", []):
-                if str(rule.get("host", "")).lower() != host:
-                    continue
-                methods = {m.upper() for m in rule.get("methods", ["*"])}
-                if "*" not in methods and method not in methods:
-                    continue
-                if binding_match.glob_match(str(rule.get("path", "/**")), path):
-                    allowed = True
-                    break
-            if not allowed:
-                _emit(
-                    run_id,
-                    "verdict",
-                    {
-                        "decision": "deny",
-                        "rule_id": "T1",
-                        "reason": "Lineage T1: strict mode blocks this egress",
-                    },
-                )
-                self._reply(403, b"Lineage T1: strict mode")
-                return
-            drip_cfg = POLICY.get("drip", {}) or {}
-            result = _drip.check(
-                host,
-                path,
-                body_size=len(body),
-                sensitive_values=[p["value"] for p in placeholders],
-            )
-            if result.blocked:
-                _emit(
-                    run_id,
-                    "verdict",
-                    {
-                        "decision": "deny",
-                        "rule_id": "T2",
-                        "reason": f"Lineage T2: {result.reason}",
-                    },
-                )
-                self._reply(403, b"Lineage T2: drip detector")
-                return
-
-        # Forward
+        headers = dict(outcome.headers)
         headers["Host"] = target.netloc
         try:
             conn = http.client.HTTPConnection(host, target.port or 80, timeout=10)
-            conn.request(method, path + (f"?{target.query}" if target.query else ""), body=body, headers=headers)
+            conn.request(method, path + (f"?{target.query}" if target.query else ""), body=outcome.body, headers=headers)
             response = conn.getresponse()
-            data = response.read()
-            # Reverse-swap secrets → placeholders
-            text = data.decode("utf-8", errors="replace")
-            for binding in run.get("bindings", []):
-                try:
-                    real = _real_secret(binding["secret_ref"])
-                except Exception:
-                    continue
-                ph = binding.get("placeholder")
-                if ph and real and real in text:
-                    text = text.replace(real, ph)
-            data = text.encode()
+            data = egress_rules.reverse_swap(run, response.read(), _real_secret)
             self.send_response(response.status)
             for key, value in response.getheaders():
                 if key.lower() in {"transfer-encoding", "connection", "content-length"}:
@@ -378,7 +206,7 @@ class Proxy(BaseHTTPRequestHandler):
                     "host": host,
                     "method": method,
                     "path": path,
-                    "bytes_out": len(body),
+                    "bytes_out": len(outcome.body),
                     "status": response.status,
                 },
             )

@@ -193,11 +193,26 @@ def evaluate(
     if not classification.high_risk:
         return Verdict()
 
-    decision_entities = sorted(
+    decision_set = {
         entity
         for entity in entities
         if entity.startswith(("pkg:", "host:", "path:", "mcp:"))
-    )
+    }
+    if classification.runs_code:
+        # URLs are normally judged by their host (D10), but code fetched and run is chosen by
+        # its full path: a trusted registry serves anyone's script. A code URL first seen in
+        # untrusted content counts. Unknown URLs still fall back to their host.
+        decision_set.update(
+            entity
+            for entity in entities
+            if entity.startswith("url:") and _tier(_record(index, entity)) == SourceTier.UNTRUSTED
+        )
+    if classification.runs_code and not any(e.startswith("pkg:") for e in decision_set):
+        # A bare `npm install` installs whatever the manifests now say, including names the
+        # agent added during this run. Judge it on those names.
+        additions = index.get("_manifest_additions", set()) if isinstance(index, Mapping) else set()
+        decision_set.update(additions)
+    decision_entities = sorted(decision_set)
     virtual_trusted = _policy_trusted(policy) | {
         f"host:{host}" for host in trusted_hosts
     }
@@ -253,7 +268,10 @@ def evaluate(
             _spans(index, record, SourceTier.CHECKED),
         )
 
-    if bool(_get(run, "strict", False)) and classification.network:
+    legs = _get(run, "legs", {}) or {}
+    # An outbound action is itself the "external" leg, so it is strict as soon as the other two are on.
+    strict = bool(_get(run, "strict", False)) or bool(legs.get("untrusted") and legs.get("private"))
+    if strict and classification.network:
         return _verdict(
             Decision.ASK,
             "T1",

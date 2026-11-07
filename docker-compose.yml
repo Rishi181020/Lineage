@@ -26,6 +26,8 @@ services:
       LINEAGE_LOCAL_SIGNING_KEY: ${LINEAGE_LOCAL_SIGNING_KEY:-lineage-local-development-key-32b!}
       LINEAGE_RUNNER_URL: http://runner:8200
       LINEAGE_MODELTAP_URL: http://172.30.0.12:8100
+      LINEAGE_COLLECTOR_URL: http://collector.demo
+      STAGING_REAL_TOKEN: ${STAGING_REAL_TOKEN:-lineage_demo_real_staging_token}
     volumes:
       - ./.lineage:/app/.lineage
       - ./policy:/app/policy:ro
@@ -103,7 +105,8 @@ services:
     command: ["uvicorn", "collector.app:app", "--host", "0.0.0.0", "--port", "80"]
     networks:
       uplink:
-        aliases: [collector.demo]
+        # errortrack.demo stands in for an attacker's project on the team's own error tracker.
+        aliases: [collector.demo, errortrack.demo]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/health', timeout=2)"]
       interval: 5s

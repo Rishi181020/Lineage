@@ -10,8 +10,10 @@ from .entities import analyze_bash
 
 _INSTALL_EXEC = re.compile(
     r"(?:^|[;&|]\s*)"
-    r"(?:npx\b|npm\s+(?:i|install|exec)\b|pip3?\s+install\b|uvx\b|"
-    r"pipx\s+(?:run|install)\b|bunx\b|pnpm\s+dlx\b|yarn\s+dlx\b)",
+    r"(?:npx\b|npm\s+(?:i|install|ci|exec|add)\b|pip3?\s+install\b|uvx\b|"
+    r"uv\s+(?:add|sync|pip\s+install)\b|poetry\s+(?:add|install)\b|"
+    r"pipx\s+(?:run|install)\b|bunx\b|bun\s+(?:add|install|i)\b|"
+    r"pnpm\s+(?:dlx|add|i|install)\b|yarn\s+(?:dlx|add|install)\b|yarn\s*(?:$|[;&|]))",
     re.I,
 )
 _NETWORK = re.compile(

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import threading
+from collections import deque
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,7 +16,9 @@ import jwt
 import yaml
 
 from lineage_core.config import get_settings
-from lineage_core.models import Binding, Event, Run, RunStatus, SourceTier
+from lineage_core.manifests import baseline_entities, is_manifest
+from lineage_core.entities import extract_entities
+from lineage_core.models import Binding, Event, Run, RunStatus, SourceTier, Span
 from lineage_core.placeholders import create as create_placeholder
 from lineage_core.secrets.file import FileSecrets
 from lineage_core.store.memory import MemoryStore
@@ -43,6 +47,11 @@ class ControlState:
         self.secrets = FileSecrets(settings.local_secrets_path)
         self._used_ips: set[str] = set()
         self._spans: dict[str, dict[str, Any]] = {}
+        # Package names the agent wrote into a manifest during the run, per run.
+        self._manifest_additions: dict[str, set[str]] = {}
+        # User prompts waiting for the model tap to see them, and what the tap has seen.
+        self._pending_prompts: dict[str, list[Span]] = {}
+        self._model_user_texts: dict[str, deque[str]] = {}
         self.approvals: dict[str, str | None] = {}
 
     @staticmethod
@@ -60,6 +69,13 @@ class ControlState:
             override = yaml.safe_load(demo.read_text(encoding="utf-8")) or {}
             data.update(override)
         return data
+
+    def real_secret(self, secret_ref: str) -> str:
+        """Demo secrets only (see scripts/seed_secrets.py). Matches egress's fallback."""
+        try:
+            return self.secrets.get(secret_ref)
+        except (FileNotFoundError, KeyError, ValueError):
+            return os.environ.get("STAGING_REAL_TOKEN", "lineage_demo_real_staging_token")
 
     def allocate_ip(self) -> str:
         with self.lock:
@@ -84,7 +100,11 @@ class ControlState:
         binding_ids: list[str],
         replay: bool = False,
         headless: bool = False,
+        manifests: dict[str, str] | None = None,
+        protection: str = "lineage",
     ) -> tuple[Run, str, dict[str, str]]:
+        if protection not in {"lineage", "baseline"}:
+            raise ValueError("protection must be lineage or baseline")
         policy_bindings = self.policy.get("bindings", {}) or {}
         bindings: list[Binding] = []
         placeholders = []
@@ -94,8 +114,11 @@ class ControlState:
             if not raw:
                 raise KeyError(f"unknown binding: {binding_id}")
             binding = Binding(id=binding_id, **raw)
-            ph = create_placeholder(binding_id)
             bindings.append(binding)
+            if protection == "baseline":
+                env[binding.env_var] = self.real_secret(binding.secret_ref)
+                continue
+            ph = create_placeholder(binding_id)
             placeholders.append(ph)
             env[binding.env_var] = ph.value
 
@@ -122,6 +145,7 @@ class ControlState:
             token_jti=jti,
             replay=replay,
             headless=headless,
+            protection=protection,
         )
         for binding in bindings:
             for host in binding.hosts:
@@ -132,9 +156,89 @@ class ControlState:
             self.store.observe_entity(
                 run_id, f"host:{str(host).lower()}", SourceTier.TRUSTED, "policy"
             )
+        self._trust_starting_manifests(run_id, manifests or {})
         self.store.put_run(run)
         self._spans[run_id] = {}
+        self._manifest_additions[run_id] = set()
+        if task.strip():
+            self._trust_operator_task(run_id, task)
         return run, run_token, env
+
+    def _trust_operator_task(self, run_id: str, task: str) -> None:
+        """The operator typed the task outside the sandbox, so it's trusted without any hook."""
+        span = Span(id=f"span_task_{run_id[-6:]}", run_id=run_id, source="operator task",
+                    tool_name="task", tier=SourceTier.TRUSTED, text=task)
+        self.remember_span(run_id, span.id, span)
+        for entity in extract_entities(task):
+            self.store.observe_entity(run_id, entity, SourceTier.TRUSTED, span.id)
+
+    def _trust_starting_manifests(self, run_id: str, manifests: dict[str, str]) -> None:
+        """Dependencies the project declared before the agent started are trusted.
+
+        Reading a manifest later proves nothing, because the agent may have edited it.
+        """
+        patterns = self.policy.get("manifest_patterns")
+        for path, text in manifests.items():
+            if not is_manifest(path, patterns):
+                continue
+            for entity in baseline_entities(path, text):
+                self.store.observe_entity(run_id, entity, SourceTier.TRUSTED, f"manifest:{path}")
+
+    # ---- user prompts (S2) ----
+
+    @staticmethod
+    def _norm(text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip().lower()
+
+    def _seen_by_model(self, run_id: str, text: str) -> bool:
+        needle = self._norm(text)
+        return bool(needle) and any(needle in hay for hay in self._model_user_texts.get(run_id, ()))
+
+    def accept_prompt(self, run: Run, span: Span) -> bool:
+        """Decides whether a UserPromptSubmit payload is really the user's.
+
+        The hook endpoint is reachable from the agent's own shell, so a hijacked agent can post a
+        fake prompt. A prompt counts only if it is the operator's task, or (for terminal runs,
+        where the person types into Claude Code) the model tap saw the same text sent as a user
+        message. Web-started runs have exactly one prompt, the task, so nothing else is accepted.
+        """
+        task = self._norm(run.task)
+        text = self._norm(span.text)
+        with self.lock:
+            if run.replay or (task and text and (text in task or task in text)):
+                return True
+            if not run.headless and self._seen_by_model(run.id, span.text):
+                return True
+            if not run.headless:
+                self._pending_prompts.setdefault(run.id, []).append(span)
+            return False
+
+    def trust_prompt(self, run_id: str, span: Span) -> None:
+        span.corroborated = True
+        self.remember_span(run_id, span.id, span)
+        for entity in extract_entities(span.text):
+            self.store.observe_entity(run_id, entity, SourceTier.TRUSTED, span.id)
+
+    def corroborate_prompts(self, run_id: str, user_texts: list[str]) -> list[str]:
+        """Called with the user-typed text blocks of each model request. Returns span IDs it verified."""
+        with self.lock:
+            seen = self._model_user_texts.setdefault(run_id, deque(maxlen=50))
+            seen.extend(self._norm(t) for t in user_texts if t)
+            pending = self._pending_prompts.get(run_id, [])
+            verified = [span for span in pending if self._seen_by_model(run_id, span.text)]
+            self._pending_prompts[run_id] = [span for span in pending if span not in verified]
+        for span in verified:
+            self.trust_prompt(run_id, span)
+            self.publish("prompt_verified", run_id, {"span_id": span.id})
+        return [span.id for span in verified]
+
+    def add_manifest_additions(self, run_id: str, entities: set[str]) -> None:
+        with self.lock:
+            self._manifest_additions.setdefault(run_id, set()).update(entities)
+
+    def manifest_additions(self, run_id: str) -> set[str]:
+        with self.lock:
+            return set(self._manifest_additions.get(run_id, set()))
 
     def end_run(self, run_id: str, status: RunStatus, *, stop_agent: bool = True) -> RunStatus:
         """Ends an active run once; a run that already ended keeps its first status."""

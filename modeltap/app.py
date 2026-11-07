@@ -90,6 +90,7 @@ def _verify_bearer(authorization: str | None) -> dict[str, Any]:
         if resp.status_code == 200:
             status = resp.json().get("status", "active")
             if status in {"revoked", "killed", "stopped", "finished"}:
+                _emit(run_id, "model_refused", {"status": status})
                 raise HTTPException(401, {"message": "Lineage: run revoked"})
     except HTTPException:
         raise
@@ -155,6 +156,7 @@ async def model(model_id: str, operation: str, request: Request):
     try:
         parsed = json.loads(body.decode("utf-8"))
         messages = parsed.get("messages") or []
+        _report_user_texts(run_id, user_typed_texts(messages))
         last_user = ""
         for message in reversed(messages):
             if message.get("role") == "user":
@@ -243,6 +245,42 @@ async def model(model_id: str, operation: str, request: Request):
             status_code=upstream.status_code,
             media_type=upstream.headers.get("content-type", "application/json"),
         )
+
+
+def user_typed_texts(messages: list[Any]) -> list[str]:
+    """Text blocks in user messages, which is where a typed prompt travels.
+
+    Tool results ride in `tool_result` blocks and Claude Code's own notes (file changes, hook
+    context) in `<system-reminder>` text, and both can carry attacker-written text, so neither counts.
+    """
+    texts: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else content or []
+        for block in blocks:
+            if not isinstance(block, dict) or block.get("type", "text") != "text":
+                continue
+            text = str(block.get("text") or "")
+            if text.strip() and "<system-reminder>" not in text:
+                texts.append(text)
+    return texts
+
+
+def _report_user_texts(run_id: str, texts: list[str]) -> None:
+    """Sent before the request is forwarded, so control can trust a typed prompt before any tool call it leads to."""
+    if not texts:
+        return
+    try:
+        httpx.post(
+            f"{CONTROL}/internal/runs/{run_id}/model-request",
+            headers={"X-Lineage-Service-Token": SERVICE_TOKEN},
+            json={"user_texts": texts[-10:]},
+            timeout=3,
+        )
+    except Exception:
+        pass
 
 
 def _report_refusal(run_id: str, status_code: int, detail: bytes) -> None:

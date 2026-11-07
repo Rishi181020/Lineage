@@ -63,7 +63,7 @@ flowchart LR
     A["Agent wants to act"] --> B{"High risk?<br/>install or run a package,<br/>network, delete, persist"}
     B -- no --> OK["Allowed<br/>normal Claude Code permissions apply"]
     B -- yes --> C{"Where did each name<br/>first appear?"}
-    C -- "your prompt, lockfiles,<br/>approved hosts" --> OK
+    C -- "your task, dependencies declared<br/>before the run, approved hosts" --> OK
     C -- "outside content:<br/>MCP, web, issues" --> D["Blocked (L1a)<br/>or Needs you (L1b)"]
     C -- "workspace files" --> E["Needs you (L3)"]
     C -- "nowhere" --> F["Needs you (L2)"]
@@ -74,6 +74,8 @@ flowchart LR
     class D stop
     class E,F ask
 ```
+
+Copying a name somewhere doesn't launder it. Text the agent writes is never a source, reading a file can't raise a name that came from outside content, and `package.json` is trusted only as it was before the run started. Even a fake "user prompt" posted from inside the sandbox isn't believed.
 
 Lineage doesn't try to *recognize* a prompt injection, which is an arms race. It asks each risky action to justify itself. A name that came from nowhere you trust gets questioned, however the attacker phrased or encoded it. Checks run as plain code, not as an AI judgment the attacker could talk to.
 
@@ -108,12 +110,19 @@ Open <http://127.0.0.1:8001>, describe a task and click **Start agent**. Claude 
 uv run python scripts/replay.py fixtures/hook_payloads/demo
 ```
 
+**Demo tools:**
+
+- **Protection switch.** Start the same task with **Normal gateway only** to see what an allowlist gateway does: the agent holds the real key, and the forged issue sends it to the attacker's project on `errortrack.demo`, an allowlisted host. Each step shows what Lineage would have done.
+- **Attacker view.** Plant your own bug report (any wording) for the next agent to read, and watch the attacker's inbox. Real keys there are masked to a hash.
+- **Scorecard view, or `make scorecard`.** Runs seven attacks through Lineage's real rules, once as a normal gateway and once with Lineage, assuming you approve every prompt. Currently: normal gateway 0/7, Lineage 7/7.
+- `bash scripts/demo_reset.sh` clears runs, the inbox and planted issues between rehearsals.
+
 **Checks:**
 
 ```sh
 uv sync
 uv run pytest -q      # unit and integration tests
-bash scripts/e2e.sh   # egress, custody and tripwire against the running stack
+bash scripts/e2e.sh   # egress, custody, tripwire and the before/after against the running stack
 make test             # tests + compile check + compose config
 ```
 
@@ -235,13 +244,16 @@ As of Nov 7, 2026. [`PROGRESS.md`](PROGRESS.md) is the live record.
 | Area | State |
 |---|---|
 | Sealed sandbox (internal network, no DNS, no direct egress) | Working, checked by `scripts/dns_leak_test.sh` |
-| Rule engine (K0, S1, I1, L1a, L1b, L2, L3, T1) and hooks API | Working, 39 tests passing |
+| Rule engine (K0, S1, I1, L1a, L1b, L2, L3, T1) and hooks API | Working, 88 tests passing |
+| Anti-laundering: manifests trusted as of run start, fake prompts rejected (S2) | Working |
+| Attack scorecard: normal gateway 0/7, Lineage 7/7 | Working (`make scorecard`, Scorecard view) |
+| Attacker console and "normal gateway only" comparison mode | Working |
 | Egress custody, C1 tripwire, C2, E1, E2 | Working, checked by `scripts/e2e.sh` |
 | Web app: start agents, live feed, approvals, revoke, diff of changes | Working |
 | Claude Code in the sandbox (v2.1.319, hooks, MCP) | Working against a scripted model; first live Bedrock run pending |
 | Run tokens | HS256 locally; AWS KMS ES256 signing not built yet |
 | AWS deployment (CDK: VPC, EC2, DynamoDB, KMS, IAM) | Code ready, not deployed |
-| Trifecta "outside communication" leg | Trips on WebFetch only; egress doesn't report it yet |
+| Trifecta lock | Working: egress traffic counts as outside communication, and strict mode covers the request that would complete the trifecta |
 
 ## Deploy on AWS
 
@@ -263,6 +275,8 @@ The stack has no inbound ports. You reach the instance and the web app through S
 - **Header credentials only.** Custody covers bearer tokens and API keys in headers. Request-signing schemes like AWS SigV4 from the agent are out of scope; the model tap signs Bedrock calls itself.
 - **Claude Code only, for provenance.** The provenance rules use Claude Code's hooks. Other CLI agents get the sealed sandbox, custody and the tripwire only.
 - **No code inspection.** If a package you already depend on goes bad, Lineage doesn't scan its code. It contains it: the code finds only stand-in keys and has no way out except allowed hosts.
+- **Scripts the agent writes.** A script the agent writes and then runs (`node x.js`) isn't judged by the gate, and manifest changes it makes aren't tracked for a bare `npm install`. Egress (allowlist, custody, tripwire, strict mode) still applies to whatever it sends.
+- **Terminal runs and fake prompts.** In `lineage run` terminal sessions, a hijacked agent could use its run token to forge a model request and get a fake prompt accepted. Web-started runs aren't affected.
 - **Your own requests.** Lineage can't stop misuse of access that you, the trusted user, actually asked for.
 - **Manual merge.** The agent's changes stay in its copy; applying the diff to your project is a manual step.
 

@@ -38,6 +38,8 @@ class Span(BaseModel):
     text: str = ""
     tool_name: str | None = None
     path: str | None = None
+    # False for a "user prompt" nobody can vouch for yet; its names aren't trusted until it is.
+    corroborated: bool = True
     ts: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

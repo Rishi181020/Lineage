@@ -99,6 +99,24 @@ def post_event(
     return {"accepted": True}
 
 
+class ModelRequestBody(BaseModel):
+    user_texts: list[str] = Field(default_factory=list)
+
+
+@router.post("/runs/{run_id}/model-request")
+def model_request(
+    run_id: str,
+    body: ModelRequestBody,
+    x_lineage_service_token: str | None = Header(default=None),
+) -> dict[str, list[str]]:
+    """The model tap reports the user-typed text in each model request (S2 corroboration)."""
+    _require_service(x_lineage_service_token)
+    state = get_state()
+    if not state.store.get_run(run_id):
+        raise HTTPException(404, "run not found")
+    return {"verified": state.corroborate_prompts(run_id, [t[:20_000] for t in body.user_texts[:50]])}
+
+
 @router.post("/runs/{run_id}/kill")
 def kill(
     run_id: str,

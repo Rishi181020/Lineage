@@ -122,6 +122,7 @@ def _handle_session_start(run, payload: dict[str, Any]) -> Response:
 
 def _handle_user_prompt(run, payload: dict[str, Any]) -> Response:
     state = get_state()
+    current = state.store.get_run(run.id) or run
     text = _text_from(payload)
     span_id = f"span_{uuid4().hex[:10]}"
     span = Span(
@@ -131,11 +132,27 @@ def _handle_user_prompt(run, payload: dict[str, Any]) -> Response:
         tool_name="UserPromptSubmit",
         tier=SourceTier.TRUSTED,
         text=text,
+        corroborated=False,
     )
-    state.remember_span(run.id, span_id, span)
-    for entity in extract_entities(text):
-        state.store.observe_entity(run.id, entity, SourceTier.TRUSTED, span_id)
-    current = state.store.get_run(run.id) or run
+    trusted = state.accept_prompt(current, span)
+    if trusted:
+        state.trust_prompt(run.id, span)
+    else:
+        state.remember_span(run.id, span_id, span)
+        state.publish(
+            "prompt_unverified",
+            run.id,
+            {
+                "span_id": span_id,
+                "excerpt": text[:200],
+                "reason": (
+                    "This prompt isn't the operator's task"
+                    + ("." if current.headless else " and the model hasn't been sent it yet.")
+                    + " Lineage isn't treating anything in it as coming from you."
+                ),
+            },
+        )
+        return Response(content="", media_type="application/json")
     update_legs(current, span=span, secret_patterns=state.policy.get("secret_patterns"))
     state.store.update_run(current.id, legs=current.legs, strict=current.strict)
     state.publish(

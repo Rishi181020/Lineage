@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/banner.png" alt="Lineage: the control layer that asks AI coding agents why. Every risky action must trace back to you; the agent only ever holds stand-in keys." width="100%">
+  <img src="docs/image/banner.png" alt="Lineage: the control layer that asks AI coding agents why. Every risky action must trace back to you; the agent only ever holds stand-in keys." width="100%">
 </p>
 
 <p align="center">
@@ -34,13 +34,13 @@ Coding agents now run with your keys and your shell, and they read text written 
 ## Same attack, two endings
 
 <p align="center">
-  <img src="docs/images/two-endings.png" alt="Side by side: without Lineage, the agent runs the attacker's npx package and sends the real key. With Lineage, the npx call is blocked because its name came from the issue, and the upload trips the stand-in-key tripwire, so the run is killed and the attacker gets nothing." width="100%">
+  <img src="docs/image/two-endings.png" alt="Side by side: without Lineage, the agent runs the attacker's npx package and sends the real key. With Lineage, the npx call is blocked because its name came from the issue, and the upload trips the stand-in-key tripwire, so the run is killed and the attacker gets nothing." width="100%">
 </p>
 
 ## See it in action
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="The Lineage web app: the agent reads issue ET-102 (marked as outside content); npx @acme-diag/fix is blocked under rule L1a; a curl upload to collector.demo needs approval under rule L1b; after approval, a tripwire fires because a stand-in key headed for collector.demo, and the run is killed." width="100%">
+  <img src="docs/image/dashboard.png" alt="The Lineage web app: the agent reads issue ET-102 (marked as outside content); npx @acme-diag/fix is blocked under rule L1a; a curl upload to collector.demo needs approval under rule L1b; after approval, a tripwire fires because a stand-in key headed for collector.demo, and the run is killed." width="100%">
 </p>
 
 <sub>The real Lineage web app showing the demo attack. These events were replayed through the real control service and rules (`scripts/replay.py`). In a live run, Claude Code produces them.</sub>

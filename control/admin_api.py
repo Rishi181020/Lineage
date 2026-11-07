@@ -52,6 +52,7 @@ def _public_run(run) -> dict[str, Any]:
         "legs": run.legs,
         "strict": run.strict,
         "replay": run.replay,
+        "headless": run.headless,
         "created_at": run.created_at.isoformat(),
     }
 
@@ -124,9 +125,7 @@ def revoke(run_id: str, authorization: str | None = Header(default=None)) -> dic
     state = get_state()
     if not state.store.get_run(run_id):
         raise HTTPException(404, "run not found")
-    state.store.update_run(run_id, status=RunStatus.REVOKED, signal="stop")
-    state.publish("status", run_id, {"status": "revoked"})
-    return {"status": "revoked"}
+    return {"status": state.end_run(run_id, RunStatus.REVOKED).value}
 
 
 @router.post("/runs/{run_id}/stop")
@@ -135,9 +134,7 @@ def stop(run_id: str, authorization: str | None = Header(default=None)) -> dict[
     state = get_state()
     if not state.store.get_run(run_id):
         raise HTTPException(404, "run not found")
-    state.store.update_run(run_id, status=RunStatus.STOPPED, signal="stop")
-    state.publish("status", run_id, {"status": "stopped"})
-    return {"status": "stopped"}
+    return {"status": state.end_run(run_id, RunStatus.STOPPED).value}
 
 
 @router.post("/runs/{run_id}/mode")
@@ -172,6 +169,7 @@ async def signal(
             RunStatus.REVOKED,
             RunStatus.KILLED,
             RunStatus.STOPPED,
+            RunStatus.FINISHED,
         }:
             return {"signal": "stop"}
         await asyncio.sleep(1)

@@ -123,7 +123,12 @@ def evaluate(
     """Apply K0/S1/I1/L1/L2/L3/T1 in policy order without I/O."""
     run_id = str(_get(run, "id", _get(run, "run_id", "")))
     status = str(_get(run, "status", RunStatus.ACTIVE))
-    if status in {RunStatus.REVOKED.value, RunStatus.KILLED.value, RunStatus.STOPPED.value}:
+    if status in {
+        RunStatus.REVOKED.value,
+        RunStatus.KILLED.value,
+        RunStatus.STOPPED.value,
+        RunStatus.FINISHED.value,
+    }:
         return _verdict(
             Decision.DENY,
             "K0",

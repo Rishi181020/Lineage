@@ -8,7 +8,7 @@ down:
 
 test:
 	uv run pytest -q
-	uv run python -m compileall -q control egress modeltap stubs launcher scripts
+	uv run python -m compileall -q control egress modeltap runner stubs launcher scripts
 	docker compose config --quiet
 
 e2e:

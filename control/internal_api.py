@@ -108,6 +108,32 @@ def kill(
     state = get_state()
     if not state.store.get_run(run_id):
         raise HTTPException(404, "run not found")
-    state.store.update_run(run_id, status=RunStatus.KILLED, signal="stop")
-    state.publish("status", run_id, {"status": "killed"})
-    return {"status": "killed"}
+    return {"status": state.end_run(run_id, RunStatus.KILLED).value}
+
+
+class ExitedBody(BaseModel):
+    code: int
+    logs: str = ""
+
+
+@router.post("/runs/{run_id}/exited")
+def exited(
+    run_id: str,
+    body: ExitedBody,
+    x_lineage_service_token: str | None = Header(default=None),
+) -> dict[str, bool]:
+    """The runner reports a container is gone. Only now can its IP be reused."""
+    _require_service(x_lineage_service_token)
+    state = get_state()
+    run = state.store.get_run(run_id)
+    if not run:
+        raise HTTPException(404, "run not found")
+    if run.status == RunStatus.ACTIVE:
+        state.publish(
+            "agent_done",
+            run_id,
+            {"ok": False, "text": f"The agent's container exited with code {body.code}.", "logs": body.logs[-4000:]},
+        )
+        state.end_run(run_id, RunStatus.FINISHED, stop_agent=False)
+    state.release_ip(run.ip)
+    return {"accepted": True}

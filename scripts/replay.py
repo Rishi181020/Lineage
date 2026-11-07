@@ -35,7 +35,7 @@ def main() -> int:
 
     token_path = Path(".lineage/operator-token")
     operator = args.operator_token or (
-        token_path.read_text(encoding="utf-8").strip()
+        token_path.read_text(encoding="utf-8-sig").strip()
         if token_path.exists()
         else "lineage-operator-dev"
     )

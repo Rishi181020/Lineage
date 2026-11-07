@@ -4,45 +4,39 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lineage</title>
+  <link rel="icon" href="data:," />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header>
-    <div class="brand">Lineage</div>
-    <p class="tag">Ask why an action happens — not only where it goes.</p>
-    <label class="token">Operator token <input id="token" type="password" placeholder="lineage-operator-dev" /></label>
-  </header>
-  <main>
-    <section id="runs">
-      <h2>Runs</h2>
-      <div id="run-list"></div>
-    </section>
-    <section id="trifecta">
-      <h2>Trifecta</h2>
-      <div class="lights">
-        <span id="leg-untrusted" class="light">untrusted</span>
-        <span id="leg-private" class="light">private</span>
-        <span id="leg-external" class="light">external</span>
-        <span id="strict" class="badge">STRICT</span>
-      </div>
-    </section>
-    <section id="feed">
-      <h2>Live feed</h2>
-      <div id="events"></div>
-    </section>
-    <section id="chain">
-      <h2>Chain</h2>
-      <pre id="chain-view">Select a verdict.</pre>
-    </section>
-    <section id="custody">
-      <h2>Custody</h2>
-      <pre id="custody-view">No run selected.</pre>
-    </section>
-    <section id="attacker">
-      <h2>Attacker's view</h2>
-      <pre id="attacker-view">collector.demo received: (poll after tripwire)</pre>
-    </section>
-  </main>
+  <form id="auth" class="banner" hidden>
+    <label for="token">Lineage rejected the operator token. Paste the value it was started with:</label>
+    <input id="token" type="password" autocomplete="off" required />
+    <button class="btn" type="submit">Save token</button>
+  </form>
+  <div id="setup" class="banner problem" role="alert" hidden></div>
+
+  <div class="app">
+    <aside class="side">
+      <h1 class="wordmark">Lineage</h1>
+      <form id="new-agent">
+        <label for="task">What should the agent do?</label>
+        <textarea id="task" rows="4" maxlength="8000" required placeholder="Fix the failing tests in orders-api"></textarea>
+        <div id="model-field" class="field" hidden>
+          <label for="model">Model</label>
+          <select id="model"></select>
+        </div>
+        <p id="workspace" class="hint"></p>
+        <button id="start" class="btn primary" type="submit" disabled>Start agent</button>
+        <p id="start-error" class="error" role="alert" hidden></p>
+      </form>
+      <h2>Agents</h2>
+      <ul id="agents" class="agents"></ul>
+    </aside>
+    <main id="agent" class="main"></main>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>

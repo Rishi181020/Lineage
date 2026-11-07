@@ -17,11 +17,10 @@ Status: **code ready; not deployed**
 Status: **PASS** (24 pytest incl. L1a/L1b/L2/binding allow)
 
 ## M2 — Claude Code + modeltap
-Status: **partial**
+Status: **working against a scripted model; real Bedrock not yet run**
 
-- Modeltap: run-token verify + Bedrock SigV4 path when AWS creds present; local returns 503
-- Managed settings + errortrack MCP stub present
-- Claude Code **not yet pinned** in agent image (Docker Hub flaky; do on EC2)
+- Claude Code 2.1.319 pinned in the agent image; hooks, MCP and stream output tested live
+- Modeltap's SigV4 path to Bedrock still needs a run with valid credentials
 
 ## M3 — Egress custody
 Status: **PASS** via `scripts/e2e.sh`
@@ -38,7 +37,10 @@ Status: **partial**
 - KMS ES256 for aws mode still TODO
 
 ## M5–M9
-Status: dashboard MVP + trifecta/strict/T2 hooks in egress; polish remaining
+Status: guided dashboard + trifecta/strict/T2 hooks in egress; polish remaining
+
+- Web app starts real agents, with live approvals, revoke and a diff of changes
+- Trifecta `external` leg only trips on WebFetch; egress traffic doesn't report it yet
 
 ## Blockers for the human
 1. Confirm region `us-west-2` and enable Bedrock Claude access

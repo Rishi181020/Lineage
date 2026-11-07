@@ -6,7 +6,6 @@
     "HTTP_PROXY": "http://egress:8080",
     "HTTPS_PROXY": "http://egress:8080",
     "NO_PROXY": "control,modeltap",
-    "NODE_EXTRA_CA_CERTS": "/etc/lineage/mitm-ca.pem",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
   "skipWebFetchPreflight": true,
@@ -46,7 +45,7 @@
             "type": "command",
             "command": "/usr/local/bin/lineage-hook",
             "args": ["pre"],
-            "timeout": 10,
+            "timeout": 340,
             "onFailure": "block"
           }
         ]

@@ -11,7 +11,9 @@ import boto3
 import httpx
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
-from fastapi import FastAPI, HTTPException, Request, Response
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from lineage_core.tokens import verify_local
@@ -24,7 +26,6 @@ SERVICE_TOKEN = os.environ.get("LINEAGE_SERVICE_TOKEN", "lineage-service-dev")
 SIGNING_KEY = os.environ.get(
     "LINEAGE_LOCAL_SIGNING_KEY", "lineage-local-development-key"
 )
-MODE = os.environ.get("LINEAGE_MODE", "local")
 
 
 def _emit(run_id: str, event_type: str, payload: dict[str, Any]) -> None:
@@ -88,7 +89,7 @@ def _verify_bearer(authorization: str | None) -> dict[str, Any]:
         )
         if resp.status_code == 200:
             status = resp.json().get("status", "active")
-            if status in {"revoked", "killed", "stopped"}:
+            if status in {"revoked", "killed", "stopped", "finished"}:
                 raise HTTPException(401, {"message": "Lineage: run revoked"})
     except HTTPException:
         raise
@@ -100,6 +101,44 @@ def _verify_bearer(authorization: str | None) -> dict[str, Any]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "modeltap"}
+
+
+@app.get("/status")
+def status(x_lineage_service_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Whether Bedrock is usable right now, in terms an operator can act on."""
+    if x_lineage_service_token != SERVICE_TOKEN:
+        raise HTTPException(401, "invalid service token")
+    configured = os.environ.get("LINEAGE_MODEL_ID", "")
+    config = Config(connect_timeout=4, read_timeout=6, retries={"max_attempts": 1})
+    try:
+        client = boto3.Session().client("bedrock", region_name=REGION, config=config)
+        pages = client.get_paginator("list_inference_profiles").paginate()
+        models = sorted(
+            (
+                summary["inferenceProfileId"]
+                for page in pages
+                for summary in page["inferenceProfileSummaries"]
+                if "anthropic" in summary["inferenceProfileId"]
+            ),
+            reverse=True,
+        )
+    except NoCredentialsError:
+        return {"ready": False, "problem": f"No AWS credentials found. Add them to ~/.aws/credentials, then check again."}
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if "AccessDenied" in code and configured:
+            return {"ready": True, "models": [configured], "default": configured, "region": REGION}
+        if "AccessDenied" in code:
+            return {"ready": False, "problem": "These AWS credentials can't list Bedrock models. Set LINEAGE_MODEL_ID in .env, or allow bedrock:ListInferenceProfiles."}
+        return {"ready": False, "problem": "AWS rejected the credentials in ~/.aws/credentials. They may have expired. Update them, then check again."}
+    except BotoCoreError as exc:
+        return {"ready": False, "problem": f"Couldn't reach AWS Bedrock: {type(exc).__name__}."}
+    if configured:
+        models = [configured, *[m for m in models if m != configured]]
+    if not models:
+        return {"ready": False, "problem": f"No Claude models are available in {REGION}. Enable one in the Bedrock console, then check again."}
+    default = configured or next((m for m in models if "sonnet" in m), models[0])
+    return {"ready": True, "models": models, "default": default, "region": REGION}
 
 
 @app.get("/inference-profiles{path:path}")
@@ -142,21 +181,6 @@ async def model(model_id: str, operation: str, request: Request):
     except Exception:
         _emit(run_id, "model_call", {"model": model_id, "operation": operation})
 
-    if MODE != "aws" and not os.environ.get("AWS_ACCESS_KEY_ID"):
-        # Local stub: return a minimal Bedrock-like JSON error explaining AWS needed
-        return Response(
-            content=json.dumps(
-                {
-                    "message": (
-                        "Lineage modeltap: set LINEAGE_MODE=aws on a host with "
-                        "instance-role Bedrock access to forward."
-                    )
-                }
-            ).encode(),
-            status_code=503,
-            media_type="application/json",
-        )
-
     url = (
         f"https://bedrock-runtime.{REGION}.amazonaws.com/model/"
         f"{model_id}/{operation}"
@@ -164,7 +188,11 @@ async def model(model_id: str, operation: str, request: Request):
     session = boto3.Session()
     credentials = session.get_credentials()
     if credentials is None:
-        raise HTTPException(500, {"message": "Lineage: no AWS credentials for Bedrock"})
+        return Response(
+            content=json.dumps({"message": "Lineage: no AWS credentials for Bedrock"}).encode(),
+            status_code=503,
+            media_type="application/json",
+        )
     frozen = credentials.get_frozen_credentials()
     aws_request = AWSRequest(
         method="POST",
@@ -177,29 +205,53 @@ async def model(model_id: str, operation: str, request: Request):
 
     if operation.endswith("stream") or "response-stream" in operation:
         client = httpx.AsyncClient(timeout=None)
+        upstream = await client.send(
+            client.build_request("POST", url, headers=headers, content=body), stream=True
+        )
 
         async def stream():
             try:
-                async with client.stream(
-                    "POST", url, headers=headers, content=body
-                ) as upstream:
-                    async for chunk in upstream.aiter_bytes():
-                        yield chunk
+                async for chunk in upstream.aiter_bytes():
+                    yield chunk
             finally:
+                await upstream.aclose()
                 await client.aclose()
+
+        if upstream.status_code >= 400:
+            detail = await upstream.aread()
+            await upstream.aclose()
+            await client.aclose()
+            _report_refusal(run_id, upstream.status_code, detail)
+            return Response(
+                content=detail,
+                status_code=upstream.status_code,
+                media_type=upstream.headers.get("content-type", "application/json"),
+            )
 
         return StreamingResponse(
             stream(),
-            media_type="application/vnd.amazon.eventstream",
+            status_code=upstream.status_code,
+            media_type=upstream.headers.get("content-type", "application/vnd.amazon.eventstream"),
         )
 
     async with httpx.AsyncClient(timeout=120) as client:
         upstream = await client.post(url, headers=headers, content=body)
+        if upstream.status_code >= 400:
+            _report_refusal(run_id, upstream.status_code, upstream.content)
         return Response(
             content=upstream.content,
             status_code=upstream.status_code,
             media_type=upstream.headers.get("content-type", "application/json"),
         )
+
+
+def _report_refusal(run_id: str, status_code: int, detail: bytes) -> None:
+    """Claude Code retries for minutes without saying why, so the operator hears it from here."""
+    try:
+        message = json.loads(detail).get("message", "")
+    except ValueError:
+        message = detail.decode("utf-8", errors="replace")
+    _emit(run_id, "model_error", {"status": status_code, "message": str(message)[:500]})
 
 
 def urlsplit_host(url: str) -> str:

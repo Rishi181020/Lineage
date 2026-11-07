@@ -24,6 +24,8 @@ services:
       LINEAGE_OPERATOR_TOKEN: ${LINEAGE_OPERATOR_TOKEN:-lineage-operator-dev}
       LINEAGE_SERVICE_TOKEN: ${LINEAGE_SERVICE_TOKEN:-lineage-service-dev}
       LINEAGE_LOCAL_SIGNING_KEY: ${LINEAGE_LOCAL_SIGNING_KEY:-lineage-local-development-key-32b!}
+      LINEAGE_RUNNER_URL: http://runner:8200
+      LINEAGE_MODELTAP_URL: http://172.30.0.12:8100
     volumes:
       - ./.lineage:/app/.lineage
       - ./policy:/app/policy:ro
@@ -66,6 +68,10 @@ services:
       LINEAGE_CONTROL_INTERNAL: http://172.30.0.10:8002
       LINEAGE_SERVICE_TOKEN: ${LINEAGE_SERVICE_TOKEN:-lineage-service-dev}
       LINEAGE_LOCAL_SIGNING_KEY: ${LINEAGE_LOCAL_SIGNING_KEY:-lineage-local-development-key-32b!}
+      LINEAGE_MODEL_ID: ${LINEAGE_MODEL_ID:-}
+    volumes:
+      # shortcut: default AWS profile only; pass AWS_PROFILE through if you need another.
+      - ${AWS_CONFIG_DIR:-${USERPROFILE:-${HOME}}/.aws}:/root/.aws:ro
     networks:
       sandbox:
         ipv4_address: 172.30.0.12
@@ -117,10 +123,40 @@ services:
       timeout: 3s
       retries: 10
 
-  agent-shell:
-    profiles: [tools]
+  # Starts agent containers for the web app. It holds the Docker socket, so it sits
+  # only on uplink, where agents can't reach it, and only runs one fixed container shape.
+  runner:
+    build:
+      context: runner
+    environment:
+      LINEAGE_SERVICE_TOKEN: ${LINEAGE_SERVICE_TOKEN:-lineage-service-dev}
+      LINEAGE_CONTROL_INTERNAL: http://control:8002
+      LINEAGE_AGENT_IMAGE: lineage-agent-shell:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The folder agents work on. Each agent gets its own copy, so this stays untouched.
+      - ${LINEAGE_WORKSPACE:-./fixtures/demo-repo}:/workspace-src:ro
+    networks:
+      uplink: {}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Only here so `docker compose up --build` builds the image the runner starts.
+  agent-image:
+    image: lineage-agent-shell:latest
     build:
       context: agent-image
+      additional_contexts:
+        fixtures: ./fixtures
+    command: ["true"]
+    network_mode: none
+
+  agent-shell:
+    profiles: [tools]
+    image: lineage-agent-shell:latest
     command: ["sleep", "infinity"]
     dns: 127.0.0.1
     extra_hosts:

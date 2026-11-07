@@ -156,3 +156,18 @@ Status key: **Settled** (don't change without the human) · **Default** (agent m
 - **Decision:** Agent image FROM `python:3.12-slim` instead of `debian:bookworm-slim`.
 - **Why:** Docker Hub pulls for debian timed out on the build host; python slim was already cached and enough for sealing tests.
 - **Revisit when:** M2 pins Claude Code / Node — may need a Node-capable base.
+
+### D23. The web app starts agents through a separate runner service — Default
+- **Decision:** A small `runner` service holds the Docker socket and starts one fixed container shape when control asks. It sits only on `uplink`, so agents can't reach it.
+- **Why:** The operator starts agents from the browser. Giving control the socket would put host-level access on the sandbox network.
+- **Rejected:** A host-side process, which would need a second start command.
+- **Revisit when:** Moving to a host where agents run under a real scheduler.
+
+### D24. Headless agents wait for the operator's answer inside the pre hook — Settled
+- **Decision:** For web-started runs, an "ask" verdict holds the PreToolUse hook open for up to 300s until the operator approves or blocks in the app. No answer means blocked. Terminal runs still get `ask`, since a person is at the prompt.
+- **Why:** `claude -p` has nobody to prompt, and it runs with `bypassPermissions`, so Lineage's hooks are the only permission system.
+
+### D25. Agents work on a private copy of the workspace — Default
+- **Decision:** The workspace is mounted read-only and copied into the container. The result is shown as a diff against that starting copy.
+- **Why:** An agent can't damage the real folder, whatever it's told to do.
+- **Revisit when:** Someone needs one-click apply.

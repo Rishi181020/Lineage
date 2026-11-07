@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Runs one Claude Code task on a private copy of the workspace and reports back to control."""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+BASELINE_GIT = {"GIT_DIR": "/tmp/baseline.git", "GIT_WORK_TREE": "/workspace"}
+
+
+def report(**payload) -> None:
+    request = urllib.request.Request(
+        "http://control:8000/hooks/agent-output",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "X-Lineage-Hook-Token": os.environ["LINEAGE_HOOK_TOKEN"],
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(request, timeout=15).read()
+    except Exception as exc:
+        print(f"lineage-agent: couldn't report to control: {exc}", file=sys.stderr, flush=True)
+
+
+def baseline_git(*args: str, capture: bool = False) -> str:
+    done = subprocess.run(
+        ["git", "-c", "user.name=lineage", "-c", "user.email=lineage@localhost", *args],
+        env={**os.environ, **BASELINE_GIT},
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+    )
+    return done.stdout if capture else ""
+
+
+def main() -> int:
+    shutil.copytree("/src", "/workspace", dirs_exist_ok=True)
+    baseline_git("init", "-q")
+    baseline_git("add", "-A")
+    baseline_git("commit", "-q", "--allow-empty", "-m", "baseline")
+
+    process = subprocess.Popen(
+        [
+            "claude", "-p", os.environ["LINEAGE_TASK"],
+            "--output-format", "stream-json", "--verbose",
+            # Lineage's hooks are the permission system here; there's nobody to prompt.
+            "--permission-mode", "bypassPermissions",
+            "--mcp-config", "/etc/lineage/mcp.json",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    result = {}
+    for line in process.stdout:
+        try:
+            message = json.loads(line)
+        except ValueError:
+            print(line, end="", flush=True)
+            continue
+        if message.get("type") == "assistant":
+            for block in message.get("message", {}).get("content", []):
+                if block.get("type") == "text" and block.get("text", "").strip():
+                    report(kind="text", text=block["text"])
+        elif message.get("type") == "result":
+            result = message
+    code = process.wait()
+
+    baseline_git("add", "-A")
+    diff = baseline_git("diff", "--cached", "--no-color", capture=True)
+    if diff:
+        report(kind="changes", diff=diff)
+    report(
+        kind="result",
+        ok=code == 0 and not result.get("is_error"),
+        text=result.get("result") or ("" if code == 0 else f"Claude Code exited with code {code}."),
+        cost_usd=result.get("total_cost_usd"),
+        duration_ms=result.get("duration_ms"),
+    )
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -12,6 +12,7 @@ class RunStatus(StrEnum):
     REVOKED = "revoked"
     KILLED = "killed"
     STOPPED = "stopped"
+    FINISHED = "finished"
 
 
 class SourceTier(StrEnum):
@@ -94,6 +95,7 @@ class Run(BaseModel):
     hook_token: str = ""
     token_jti: str = ""
     replay: bool = False
+    headless: bool = False
     signal: str = "none"
     legs: dict[str, bool] = Field(
         default_factory=lambda: {

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export MSYS_NO_PATHCONV=1  # stops Git Bash rewriting container paths like /tmp/out
 
 IMAGE="${LINEAGE_AGENT_IMAGE:-lineage-agent-shell:latest}"
 OPERATOR_TOKEN="${LINEAGE_OPERATOR_TOKEN:-lineage-operator-dev}"

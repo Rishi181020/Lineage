@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 import threading
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import httpx
 import jwt
 import yaml
 
 from lineage_core.config import get_settings
-from lineage_core.models import Binding, Event, Run, SourceTier
+from lineage_core.models import Binding, Event, Run, RunStatus, SourceTier
 from lineage_core.placeholders import create as create_placeholder
 from lineage_core.secrets.file import FileSecrets
 from lineage_core.store.memory import MemoryStore
@@ -21,6 +23,7 @@ from lineage_core.tokens import mint_local
 from .bus import EventBus
 
 IP_POOL = [f"172.30.0.{i}" for i in range(100, 200)]
+RUNNER_URL = os.environ.get("LINEAGE_RUNNER_URL", "http://runner:8200")
 
 
 class ControlState:
@@ -31,8 +34,6 @@ class ControlState:
         self.bus = EventBus()
         self.lock = threading.RLock()
         self.policy = self._load_policy(settings.policy_path)
-        import os
-
         self.operator_token = os.environ.get("LINEAGE_OPERATOR_TOKEN") or self._read_token(
             settings.operator_token_path, "lineage-operator-dev"
         )
@@ -42,11 +43,12 @@ class ControlState:
         self.secrets = FileSecrets(settings.local_secrets_path)
         self._used_ips: set[str] = set()
         self._spans: dict[str, dict[str, Any]] = {}
+        self.approvals: dict[str, str | None] = {}
 
     @staticmethod
     def _read_token(path: Path, default: str) -> str:
         try:
-            return path.read_text(encoding="utf-8").strip() or default
+            return path.read_text(encoding="utf-8-sig").strip() or default
         except FileNotFoundError:
             return default
 
@@ -81,6 +83,7 @@ class ControlState:
         mcp_allow: list[str],
         binding_ids: list[str],
         replay: bool = False,
+        headless: bool = False,
     ) -> tuple[Run, str, dict[str, str]]:
         policy_bindings = self.policy.get("bindings", {}) or {}
         bindings: list[Binding] = []
@@ -118,6 +121,7 @@ class ControlState:
             hook_token=hook_token,
             token_jti=jti,
             replay=replay,
+            headless=headless,
         )
         for binding in bindings:
             for host in binding.hosts:
@@ -132,6 +136,24 @@ class ControlState:
         self._spans[run_id] = {}
         return run, run_token, env
 
+    def end_run(self, run_id: str, status: RunStatus, *, stop_agent: bool = True) -> RunStatus:
+        """Ends an active run once; a run that already ended keeps its first status."""
+        run = self.store.get_run(run_id)
+        if run is None or run.status != RunStatus.ACTIVE:
+            return run.status if run else status
+        self.store.update_run(run_id, status=status, signal="stop")
+        self.publish("status", run_id, {"status": status.value})
+        if run.headless and stop_agent:
+            try:
+                httpx.delete(
+                    f"{RUNNER_URL}/agents/{run_id}",
+                    headers={"X-Lineage-Service-Token": self.service_token},
+                    timeout=5,
+                )
+            except httpx.HTTPError:
+                pass  # The run is already refused everywhere; the container just lingers.
+        return status
+
     def get_run_by_hook_token(self, token: str) -> Run | None:
         for run in self.store.list_runs():
             if run.hook_token and secrets.compare_digest(run.hook_token, token):
@@ -139,7 +161,7 @@ class ControlState:
         return None
 
     def get_run_by_ip(self, ip: str) -> Run | None:
-        for run in self.store.list_runs():
+        for run in reversed(self.store.list_runs()):  # IPs get reused; newest wins
             if run.ip == ip:
                 return run
         return None

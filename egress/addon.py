@@ -190,7 +190,7 @@ class Proxy(BaseHTTPRequestHandler):
             self._reply(407, b"Lineage: unknown agent")
             return
         run_id = run["run_id"]
-        if run["status"] in {"revoked", "killed", "stopped"}:
+        if run["status"] in {"revoked", "killed", "stopped", "finished"}:
             _emit(run_id, "egress_block", {"rule": "K0", "host": host})
             self._reply(403, f'Lineage K0: run {run_id} is {run["status"]}'.encode())
             return

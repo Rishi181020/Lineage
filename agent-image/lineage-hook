@@ -58,7 +58,9 @@ def main() -> int:
             },
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=8) as response:
+        # Pre hooks can wait on an operator decision; control gives up after 300s.
+        timeout = 330 if event == "pre" else 8
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             output = response.read()
         if output and output.strip() not in {b"", b"{}"}:
             sys.stdout.buffer.write(output)

@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import fnmatch
+import inspect
 import json
+import time
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 
 from lineage_core.entities import extract_entities
-from lineage_core.models import Decision, SourceTier, Span
+from lineage_core.models import Decision, RunStatus, SourceTier, Span
 from lineage_core.rules import evaluate
 from lineage_core.trifecta import update_legs
 
 from .state import get_state
 
 router = APIRouter(prefix="/hooks", tags=["hooks"])
+
+APPROVAL_TIMEOUT_S = 300
 
 
 def _auth(hook_token: str | None):
@@ -46,11 +51,12 @@ def _tool_input(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _text_from(payload: dict[str, Any]) -> str:
-    for key in ("prompt", "user_prompt", "content", "result", "tool_result"):
+    # Claude Code sends a tool's output as tool_response, as text or structured content.
+    for key in ("prompt", "user_prompt", "content", "result", "tool_result", "tool_response"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             return value
-        if isinstance(value, dict):
+        if isinstance(value, (dict, list)) and value:
             return json.dumps(value)
     tool_input = _tool_input(payload)
     if tool_input:
@@ -124,7 +130,7 @@ def _handle_user_prompt(run, payload: dict[str, Any]) -> Response:
     return Response(content="", media_type="application/json")
 
 
-def _handle_pre(run, payload: dict[str, Any]) -> Response:
+async def _handle_pre(run, payload: dict[str, Any]) -> Response:
     state = get_state()
     current = state.store.get_run(run.id) or run
     tool = _tool_name(payload)
@@ -149,11 +155,84 @@ def _handle_pre(run, payload: dict[str, Any]) -> Response:
             "tool_input": tool_input,
         },
     )
+    if verdict.decision == Decision.ASK and current.headless:
+        # A headless agent has no terminal to ask in, so the operator answers in the app.
+        decision, reason = await _await_approval(current.id, verdict, tool, tool_input)
+        return Response(
+            content=json.dumps(_hook_output(decision, reason)),
+            media_type="application/json",
+        )
     if verdict.decision in {Decision.ASK, Decision.DENY}:
         return Response(
             content=json.dumps(_hook_output(verdict.decision, verdict.reason)),
             media_type="application/json",
         )
+    return Response(content="", media_type="application/json")
+
+
+async def _await_approval(
+    run_id: str, verdict: Any, tool: str, tool_input: dict[str, Any]
+) -> tuple[Decision, str]:
+    state = get_state()
+    approval_id = f"apr_{uuid4().hex[:10]}"
+    state.approvals[approval_id] = None
+    state.publish(
+        "approval_needed",
+        run_id,
+        {
+            "approval_id": approval_id,
+            "rule_id": verdict.rule_id,
+            "reason": verdict.reason,
+            "tool_name": tool,
+            "tool_input": tool_input,
+        },
+    )
+    deadline = time.monotonic() + APPROVAL_TIMEOUT_S
+    outcome, why = "deny", "Nobody answered in time."
+    try:
+        while time.monotonic() < deadline:
+            answer = state.approvals.get(approval_id)
+            if answer:
+                outcome = answer
+                why = "Approved by the operator." if answer == "allow" else "Blocked by the operator."
+                break
+            current = state.store.get_run(run_id)
+            if current is None or current.status != RunStatus.ACTIVE:
+                why = "The run has ended."
+                break
+            await asyncio.sleep(0.25)
+    finally:
+        state.approvals.pop(approval_id, None)
+    state.publish(
+        "approval_resolved",
+        run_id,
+        {"approval_id": approval_id, "decision": outcome, "reason": why},
+    )
+    return (Decision.ALLOW if outcome == "allow" else Decision.DENY), f"Lineage: {why}"
+
+
+def _handle_agent_output(run, payload: dict[str, Any]) -> Response:
+    """What the agent says and changes, from its container. Display only: nothing here affects trust."""
+    state = get_state()
+    kind = payload.get("kind")
+    if kind == "text":
+        state.publish("agent_text", run.id, {"text": str(payload.get("text", ""))[:20_000]})
+    elif kind == "changes":
+        state.publish("agent_changes", run.id, {"diff": str(payload.get("diff", ""))[:300_000]})
+    elif kind == "result":
+        state.publish(
+            "agent_done",
+            run.id,
+            {
+                "ok": bool(payload.get("ok")),
+                "text": str(payload.get("text", ""))[:20_000],
+                "cost_usd": payload.get("cost_usd"),
+                "duration_ms": payload.get("duration_ms"),
+            },
+        )
+        state.end_run(run.id, RunStatus.FINISHED, stop_agent=False)
+    else:
+        raise HTTPException(400, "unknown output kind")
     return Response(content="", media_type="application/json")
 
 
@@ -229,8 +308,10 @@ async def hook_event(
         "user-prompt": _handle_user_prompt,
         "pre": _handle_pre,
         "post": _handle_post,
+        "agent-output": _handle_agent_output,
     }
     handler = handlers.get(event)
     if not handler:
         raise HTTPException(404, f"unknown hook event {event}")
-    return handler(run, payload)
+    response = handler(run, payload)
+    return await response if inspect.isawaitable(response) else response

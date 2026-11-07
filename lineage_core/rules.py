@@ -193,11 +193,17 @@ def evaluate(
     if not classification.high_risk:
         return Verdict()
 
-    decision_entities = sorted(
+    decision_set = {
         entity
         for entity in entities
         if entity.startswith(("pkg:", "host:", "path:", "mcp:"))
-    )
+    }
+    if classification.runs_code and not any(e.startswith("pkg:") for e in decision_set):
+        # A bare `npm install` installs whatever the manifests now say, including names the
+        # agent added during this run. Judge it on those names.
+        additions = index.get("_manifest_additions", set()) if isinstance(index, Mapping) else set()
+        decision_set.update(additions)
+    decision_entities = sorted(decision_set)
     virtual_trusted = _policy_trusted(policy) | {
         f"host:{host}" for host in trusted_hosts
     }

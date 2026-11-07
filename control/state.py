@@ -14,7 +14,9 @@ import jwt
 import yaml
 
 from lineage_core.config import get_settings
-from lineage_core.models import Binding, Event, Run, RunStatus, SourceTier
+from lineage_core.manifests import baseline_entities, is_manifest
+from lineage_core.entities import extract_entities
+from lineage_core.models import Binding, Event, Run, RunStatus, SourceTier, Span
 from lineage_core.placeholders import create as create_placeholder
 from lineage_core.secrets.file import FileSecrets
 from lineage_core.store.memory import MemoryStore
@@ -43,6 +45,8 @@ class ControlState:
         self.secrets = FileSecrets(settings.local_secrets_path)
         self._used_ips: set[str] = set()
         self._spans: dict[str, dict[str, Any]] = {}
+        # Package names the agent wrote into a manifest during the run, per run.
+        self._manifest_additions: dict[str, set[str]] = {}
         self.approvals: dict[str, str | None] = {}
 
     @staticmethod
@@ -84,6 +88,7 @@ class ControlState:
         binding_ids: list[str],
         replay: bool = False,
         headless: bool = False,
+        manifests: dict[str, str] | None = None,
     ) -> tuple[Run, str, dict[str, str]]:
         policy_bindings = self.policy.get("bindings", {}) or {}
         bindings: list[Binding] = []
@@ -132,9 +137,41 @@ class ControlState:
             self.store.observe_entity(
                 run_id, f"host:{str(host).lower()}", SourceTier.TRUSTED, "policy"
             )
+        self._trust_starting_manifests(run_id, manifests or {})
         self.store.put_run(run)
         self._spans[run_id] = {}
+        self._manifest_additions[run_id] = set()
+        if task.strip():
+            self._trust_operator_task(run_id, task)
         return run, run_token, env
+
+    def _trust_operator_task(self, run_id: str, task: str) -> None:
+        """The operator typed the task outside the sandbox, so it's trusted without any hook."""
+        span = Span(id=f"span_task_{run_id[-6:]}", run_id=run_id, source="operator task",
+                    tool_name="task", tier=SourceTier.TRUSTED, text=task)
+        self.remember_span(run_id, span.id, span)
+        for entity in extract_entities(task):
+            self.store.observe_entity(run_id, entity, SourceTier.TRUSTED, span.id)
+
+    def _trust_starting_manifests(self, run_id: str, manifests: dict[str, str]) -> None:
+        """Dependencies the project declared before the agent started are trusted.
+
+        Reading a manifest later proves nothing, because the agent may have edited it.
+        """
+        patterns = self.policy.get("manifest_patterns")
+        for path, text in manifests.items():
+            if not is_manifest(path, patterns):
+                continue
+            for entity in baseline_entities(path, text):
+                self.store.observe_entity(run_id, entity, SourceTier.TRUSTED, f"manifest:{path}")
+
+    def add_manifest_additions(self, run_id: str, entities: set[str]) -> None:
+        with self.lock:
+            self._manifest_additions.setdefault(run_id, set()).update(entities)
+
+    def manifest_additions(self, run_id: str) -> set[str]:
+        with self.lock:
+            return set(self._manifest_additions.get(run_id, set()))
 
     def end_run(self, run_id: str, status: RunStatus, *, stop_agent: bool = True) -> RunStatus:
         """Ends an active run once; a run that already ended keeps its first status."""

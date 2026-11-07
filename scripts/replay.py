@@ -11,6 +11,9 @@ from pathlib import Path
 
 import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lineage_core.manifests import read_manifests  # noqa: E402
+
 
 def _event_from_name(path: Path, payload: dict) -> str:
     if "_event" in payload:
@@ -50,6 +53,7 @@ def main() -> int:
                 "mcp_allow": ["errortrack.list_issues", "errortrack.get_issue"],
                 "bindings": ["staging-infra"],
                 "replay": True,
+                "manifests": read_manifests(Path(__file__).resolve().parents[1] / "fixtures" / "demo-repo"),
             },
         )
         created.raise_for_status()

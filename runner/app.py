@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import socket
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
@@ -113,6 +115,38 @@ class AgentBody(BaseModel):
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "workspace": _workspace_source()}
+
+
+MANIFEST_PATTERNS = (
+    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+    "requirements*.txt", "pyproject.toml", "poetry.lock", "uv.lock",
+)
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
+
+
+@app.get("/workspace/manifests")
+def manifests(x_lineage_service_token: str | None = Header(default=None)) -> dict[str, str]:
+    """The workspace's manifests as they are before any agent touches them.
+
+    Control trusts the dependencies these declare. Agents only ever see a copy, so this
+    read-only original is the honest record of what the project asked for.
+    """
+    _auth(x_lineage_service_token)
+    root = Path(WORKSPACE_MOUNT)
+    found: dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        if len(Path(dirpath).relative_to(root).parts) > 4:
+            dirnames[:] = []
+            continue
+        for name in filenames:
+            if not any(fnmatch.fnmatch(name, pat) for pat in MANIFEST_PATTERNS):
+                continue
+            path = Path(dirpath) / name
+            if path.stat().st_size > 2_000_000 or len(found) >= 100:
+                continue
+            found[str(path.relative_to(root))] = path.read_text(encoding="utf-8", errors="replace")
+    return found
 
 
 @app.post("/agents")

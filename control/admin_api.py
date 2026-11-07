@@ -21,6 +21,8 @@ class CreateRunBody(BaseModel):
     mcp_allow: list[str] = Field(default_factory=list)
     bindings: list[str] = Field(default_factory=list)
     replay: bool = False
+    # The workspace's manifests before the agent starts: {relative path: contents}.
+    manifests: dict[str, str] = Field(default_factory=dict)
 
 
 class ModeBody(BaseModel):
@@ -71,6 +73,7 @@ def create_run(
             mcp_allow=body.mcp_allow,
             binding_ids=body.bindings,
             replay=body.replay,
+            manifests=body.manifests,
         )
     except KeyError as exc:
         raise HTTPException(400, str(exc)) from exc

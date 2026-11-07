@@ -224,3 +224,14 @@ def test_bedrock_refusal_reaches_claude_code_and_the_operator(monkeypatch, opera
 
     assert resp.status_code == 403
     assert ("model_error", {"status": 403, "message": "Access denied"}) in emitted
+
+
+def test_dependencies_in_the_workspace_at_start_are_trusted(client, runner, monkeypatch):
+    def fake_get(url, **kwargs):
+        assert url.endswith("/workspace/manifests")
+        body = {"package.json": '{"devDependencies": {"left-pad": "^1.3.0"}}'}
+        return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(agents_api.httpx, "get", fake_get)
+    run = _start(client)
+    assert _hook(client, run, "pre", {"tool_name": "Bash", "tool_input": {"command": "npx left-pad"}}).content == b""

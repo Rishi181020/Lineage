@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import inspect
 import json
+import re
 import time
 from typing import Any
 from uuid import uuid4
@@ -11,6 +11,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 
 from lineage_core.entities import extract_entities
+from lineage_core.manifests import candidate_entities, is_manifest, mentions_manifest, written_text
 from lineage_core.models import Decision, RunStatus, SourceTier, Span
 from lineage_core.rules import evaluate
 from lineage_core.trifecta import update_legs
@@ -64,18 +65,18 @@ def _text_from(payload: dict[str, Any]) -> str:
     return json.dumps(payload)[:4000]
 
 
+WRITE_TOOLS = {"edit", "write", "multiedit", "notebookedit"}
+
+
 def _tier_for_post(tool: str, tool_input: dict[str, Any], policy: dict[str, Any]) -> SourceTier:
     if tool.startswith("mcp__"):
         return SourceTier.UNTRUSTED
     lower = tool.lower()
     if "webfetch" in lower or "websearch" in lower:
         return SourceTier.UNTRUSTED
-    path = str(tool_input.get("file_path") or tool_input.get("path") or "")
-    name = path.replace("\\", "/").rsplit("/", 1)[-1]
-    manifests = policy.get("manifest_patterns") or []
-    if name and any(fnmatch.fnmatch(name, pat) for pat in manifests):
-        return SourceTier.TRUSTED
-    if lower in {"read", "grep", "glob", "edit", "write"}:
+    # Manifests get no special trust here: what they declared at the start is trusted when the
+    # run is created, and anything read later may be the agent's own edit.
+    if lower in {"read", "grep", "glob"} | WRITE_TOOLS:
         return SourceTier.CHECKED
     command = str(tool_input.get("command") or "")
     if any(
@@ -84,6 +85,21 @@ def _tier_for_post(tool: str, tool_input: dict[str, Any], policy: dict[str, Any]
     ):
         return SourceTier.UNTRUSTED
     return SourceTier.CHECKED
+
+
+def _track_manifest_writes(run_id: str, tool: str, tool_input: dict[str, Any]) -> None:
+    """Remembers package names the agent puts into a manifest, so a bare `npm install` is judged on them."""
+    state = get_state()
+    patterns = state.policy.get("manifest_patterns")
+    lower = tool.lower()
+    if lower in WRITE_TOOLS:
+        path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or tool_input.get("path") or "")
+        if is_manifest(path, patterns):
+            state.add_manifest_additions(run_id, candidate_entities(written_text(tool_input), path))
+    elif lower == "bash":
+        command = str(tool_input.get("command") or "")
+        if mentions_manifest(command, patterns) or re.search(r"\bnpm\s+pkg\s+set\b", command):
+            state.add_manifest_additions(run_id, candidate_entities(command))
 
 
 def _hook_output(decision: Decision, reason: str) -> dict[str, Any]:
@@ -138,6 +154,7 @@ async def _handle_pre(run, payload: dict[str, Any]) -> Response:
     event = {"tool_name": tool, "tool_input": tool_input, "payload": payload}
     index = state.store.entity_index(current.id)
     index["_spans"] = state.span_map(current.id)
+    index["_manifest_additions"] = state.manifest_additions(current.id)
     verdict = evaluate(current, event, index, state.policy)
     state.publish(
         "verdict",
@@ -255,8 +272,11 @@ def _handle_post(run, payload: dict[str, Any]) -> Response:
         path=path,
     )
     state.remember_span(current.id, span_id, span)
-    for entity in extract_entities(text, tool_name=tool, tool_input=tool_input):
-        state.store.observe_entity(current.id, entity, tier, span_id)
+    # What the agent wrote is its own output, not a source for anything it does next.
+    if tool.lower() not in WRITE_TOOLS:
+        for entity in extract_entities(text, tool_name=tool, tool_input=tool_input):
+            state.store.observe_entity(current.id, entity, tier, span_id)
+    _track_manifest_writes(current.id, tool, tool_input)
     update_legs(
         current,
         span=span,

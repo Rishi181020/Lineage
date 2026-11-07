@@ -49,6 +49,10 @@ class EntityRecord(BaseModel):
 
     def observe(self, tier: SourceTier, span_id: str) -> None:
         self.first_span_by_tier.setdefault(tier, span_id)
+        # A workspace file can't wash an untrusted name: the agent may have written it there.
+        # Only a trusted source (the user, the starting manifests, a binding) raises it.
+        if tier == SourceTier.CHECKED and self.best_tier == SourceTier.UNTRUSTED:
+            return
         if _TIER_RANK[tier] > _TIER_RANK[self.best_tier]:
             self.best_tier = tier
 

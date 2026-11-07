@@ -1,0 +1,4 @@
+# These run inside Linux containers, where a Windows line ending breaks the shebang.
+agent-image/lineage-agent text eol=lf
+agent-image/lineage-hook text eol=lf
+*.sh text eol=lf

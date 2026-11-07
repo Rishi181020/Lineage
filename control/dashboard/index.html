@@ -21,9 +21,19 @@
   <div class="app">
     <aside class="side">
       <h1 class="wordmark">Lineage</h1>
+      <nav class="views" aria-label="Views">
+        <button type="button" data-view="agents" aria-current="true">Agents</button>
+        <button type="button" data-view="attacker">Attacker</button>
+        <button type="button" data-view="scorecard">Scorecard</button>
+      </nav>
       <form id="new-agent">
         <label for="task">What should the agent do?</label>
-        <textarea id="task" rows="4" maxlength="8000" required placeholder="Fix the failing tests in orders-api"></textarea>
+        <textarea id="task" rows="4" maxlength="8000" required placeholder="Investigate the open errortrack issues and apply the fixes"></textarea>
+        <fieldset class="protection">
+          <legend>Protection</legend>
+          <label><input type="radio" name="protection" value="lineage" checked /> Lineage</label>
+          <label><input type="radio" name="protection" value="baseline" /> Normal gateway only</label>
+        </fieldset>
         <div id="model-field" class="field" hidden>
           <label for="model">Model</label>
           <select id="model"></select>

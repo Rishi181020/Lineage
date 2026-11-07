@@ -1,4 +1,4 @@
-.PHONY: up down test e2e agent-shell
+.PHONY: up down test e2e agent-shell scorecard
 
 up:
 	docker compose up --build -d
@@ -16,3 +16,6 @@ e2e:
 
 agent-shell:
 	docker compose --profile tools run --rm agent-shell bash
+
+scorecard:
+	uv run python -m control.scorecard

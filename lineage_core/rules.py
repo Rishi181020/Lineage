@@ -198,6 +198,15 @@ def evaluate(
         for entity in entities
         if entity.startswith(("pkg:", "host:", "path:", "mcp:"))
     }
+    if classification.runs_code:
+        # URLs are normally judged by their host (D10), but code fetched and run is chosen by
+        # its full path: a trusted registry serves anyone's script. A code URL first seen in
+        # untrusted content counts. Unknown URLs still fall back to their host.
+        decision_set.update(
+            entity
+            for entity in entities
+            if entity.startswith("url:") and _tier(_record(index, entity)) == SourceTier.UNTRUSTED
+        )
     if classification.runs_code and not any(e.startswith("pkg:") for e in decision_set):
         # A bare `npm install` installs whatever the manifests now say, including names the
         # agent added during this run. Judge it on those names.

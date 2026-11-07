@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import secrets
+import subprocess
+import sys
 from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException
@@ -180,6 +184,21 @@ async def signal(
             return {"signal": "stop"}
         await asyncio.sleep(1)
     return {"signal": "none"}
+
+
+@router.post("/scorecard")
+def scorecard(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Runs every scorecard attack now, in a separate process with its own empty control plane,
+    so live runs and this dashboard are untouched."""
+    _require_operator(authorization)
+    env = {k: v for k, v in os.environ.items() if k != "LINEAGE_OPERATOR_TOKEN"}
+    done = subprocess.run(
+        [sys.executable, "-m", "control.scorecard", "--json"],
+        capture_output=True, text=True, timeout=60, env=env,
+    )
+    if done.returncode != 0:
+        raise HTTPException(500, f"The scorecard failed: {done.stderr[-500:]}")
+    return json.loads(done.stdout)
 
 
 @router.get("/stream")

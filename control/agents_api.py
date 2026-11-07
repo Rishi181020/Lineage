@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from lineage_core.models import RunStatus
 
 from .admin_api import _public_run, _require_operator
+from .attacker_api import current_issues
 from .state import RUNNER_URL, get_state
 
 router = APIRouter(prefix="/admin", tags=["agents"])
@@ -102,6 +103,8 @@ def start_agent(
                     "ANTHROPIC_MODEL": body.model,
                     "ANTHROPIC_SMALL_FAST_MODEL": body.model,
                 },
+                # What errortrack serves this agent, including anything planted from the attacker console.
+                "issues": current_issues(),
             },
             timeout=30,
             trust_env=False,

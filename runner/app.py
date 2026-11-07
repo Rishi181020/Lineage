@@ -110,6 +110,27 @@ class AgentBody(BaseModel):
     run_id: str
     ip: str
     env: dict[str, str]
+    issues: list[dict] | None = None
+
+
+def _issues_tar(issues: list[dict]) -> bytes:
+    """A tar with /etc/lineage/errortrack_issues.json, root-owned and read-only to the agent.
+
+    Copied in before start rather than passed as an environment variable: `env` output is
+    ordinary workspace content to Lineage, which would let an agent re-read the attacker's
+    text from somewhere that isn't marked untrusted.
+    """
+    import io
+    import json as _json
+    import tarfile
+
+    data = _json.dumps(issues, indent=2).encode()
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        info = tarfile.TarInfo("errortrack_issues.json")
+        info.size, info.mode, info.uid, info.gid = len(data), 0o644, 0, 0
+        tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
 
 
 @app.get("/health")
@@ -185,6 +206,16 @@ def start(body: AgentBody, x_lineage_service_token: str | None = Header(default=
             if created.status_code >= 400:
                 raise HTTPException(502, created.text[:500])
             container_id = created.json()["Id"]
+            if body.issues is not None:
+                copied = docker.put(
+                    f"/containers/{container_id}/archive",
+                    params={"path": "/etc/lineage"},
+                    content=_issues_tar(body.issues),
+                    headers={"Content-Type": "application/x-tar"},
+                )
+                if copied.status_code >= 400:
+                    docker.delete(f"/containers/{container_id}", params={"force": "true"})
+                    raise HTTPException(502, f"couldn't give the agent its issues: {copied.text[:300]}")
             started = docker.post(f"/containers/{container_id}/start")
             if started.status_code >= 400:
                 docker.delete(f"/containers/{container_id}", params={"force": "true"})

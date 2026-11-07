@@ -1,3 +1,5 @@
+import time
+
 from fastapi import FastAPI, Request
 
 app = FastAPI(title="Lineage Collector Stub")
@@ -23,6 +25,8 @@ def clear_received():
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def collect(path: str, request: Request):
     item = {
+        "ts": time.time(),
+        "host": request.headers.get("host", ""),
         "method": request.method,
         "path": "/" + path,
         "headers": dict(request.headers),

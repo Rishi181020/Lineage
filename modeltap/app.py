@@ -90,6 +90,7 @@ def _verify_bearer(authorization: str | None) -> dict[str, Any]:
         if resp.status_code == 200:
             status = resp.json().get("status", "active")
             if status in {"revoked", "killed", "stopped", "finished"}:
+                _emit(run_id, "model_refused", {"status": status})
                 raise HTTPException(401, {"message": "Lineage: run revoked"})
     except HTTPException:
         raise

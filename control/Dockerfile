@@ -4,6 +4,7 @@ COPY pyproject.toml README.md ./
 COPY lineage_core ./lineage_core
 COPY control ./control
 COPY policy ./policy
+COPY fixtures/errortrack_issues.json ./fixtures/errortrack_issues.json
 RUN pip install --no-cache-dir .
 ENV LINEAGE_POLICY_PATH=/app/policy/default.yaml \
     LINEAGE_LOCAL_SECRETS_PATH=/app/.lineage/secrets.yaml \

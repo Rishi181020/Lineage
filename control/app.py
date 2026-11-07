@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .admin_api import router as admin_router
 from .agents_api import router as agents_router
+from .attacker_api import router as attacker_router
 from .hooks_api import router as hooks_router
 from .internal_api import router as internal_router
 from .state import get_state
@@ -15,6 +16,7 @@ DASHBOARD = Path(__file__).parent / "dashboard"
 app = FastAPI(title="Lineage Control")
 app.include_router(hooks_router)
 app.include_router(agents_router)
+app.include_router(attacker_router)
 app.include_router(admin_router)
 app.include_router(internal_router)
 app.mount("/static", StaticFiles(directory=DASHBOARD), name="static")

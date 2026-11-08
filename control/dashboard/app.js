@@ -171,7 +171,8 @@
     if (S.view === "agents" || S.view === "supply") jobs.push(S.selected ? eventsFor(S.selected).then((e) => { S.events = e; }) : Promise.resolve((S.events = [])));
     if (S.view === "supply") {
       // The before/after compares the latest run of each kind (S.runs is newest first).
-      const latest = (kind) => S.runs.find((r) => (r.protection || "lineage") === kind);
+      // Only real agent runs: a replay feeds recorded hook calls and never installs anything.
+      const latest = (kind) => S.runs.find((r) => !r.replay && (r.protection || "lineage") === kind);
       jobs.push(Promise.all(["baseline", "lineage"].map(async (kind) => {
         const run = latest(kind);
         return [kind, run ? { run, events: await eventsFor(run.run_id) } : null];
@@ -676,6 +677,7 @@
       },
         el("span", { class: `dot ${r.status}`, "aria-hidden": "true" }),
         el("span", {}, time(r.created_at)),
+        r.replay ? el("span", { class: "pill planted" }, "REPLAY") : null,
         el("span", { class: "chip-meta" }, `${r.protection === "baseline" ? "No Lineage" : "Lineage"} · ${STATUS_WORD[r.status] || r.status}`)))) : null,
       run ? el("div", { class: "why-wrap" }, panel("shield", "Why Lineage allowed or blocked each action", decisions.length ? String(decisions.length) : null,
         decisions.length

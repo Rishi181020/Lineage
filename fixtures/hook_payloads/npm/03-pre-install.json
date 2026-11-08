@@ -1,0 +1,5 @@
+{
+  "_event": "pre",
+  "tool_name": "Bash",
+  "tool_input": {"command": "npm install"}
+}

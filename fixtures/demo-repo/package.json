@@ -4,5 +4,8 @@
   "private": true,
   "scripts": {
     "test": "node --test"
+  },
+  "dependencies": {
+    "orders-money": "^1.4.2"
   }
 }

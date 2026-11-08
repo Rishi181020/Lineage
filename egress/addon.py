@@ -142,6 +142,10 @@ class Proxy(BaseHTTPRequestHandler):
         self._handle()
 
     def do_CONNECT(self):
+        # HTTPS tunnels are refused, but recorded: most real exfiltration tries HTTPS first.
+        run = _lookup_run(self._client_ip())
+        if run:
+            _emit(run["run_id"], "egress_block", {"rule": "E1", "host": self.path.rsplit(":", 1)[0].lower(), "path": " (HTTPS)"})
         self._reply(403, b"Lineage E1: CONNECT blocked in demo HTTP proxy")
 
     def _client_ip(self) -> str:

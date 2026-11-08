@@ -89,6 +89,20 @@ def _source_details(index: Any, record: Any, tier: SourceTier) -> tuple[str, str
     return str(source), str(ts)
 
 
+def _provenance(index: Any, entity: str, tier: SourceTier | None) -> dict[str, Any]:
+    """Where a trusted name came from, in the same shape the dashboard reads for chains."""
+    record = _record(index, entity)
+    span = (_spans(index, record, tier) if record is not None and tier else []) or [None]
+    span = span[0]
+    if isinstance(span, str):
+        source, text = span, ""
+    elif span is not None:
+        source, text = _get(span, "source") or _get(span, "tool_name") or "", _get(span, "text") or ""
+    else:
+        source, text = ("policy allowlist" if tier == SourceTier.TRUSTED else ""), ""
+    return {"entity": entity, "tier": tier.value if tier else None, "source": source, "text": str(text)[:2000]}
+
+
 def _verdict(
     decision: Decision,
     rule_id: str,
@@ -279,4 +293,12 @@ def evaluate(
             "outbound actions need approval.",
             decision_entities,
         )
-    return Verdict()
+    # Allowed, but still say why: each name's trusted source, for the dashboard's lineage view.
+    shown = decision_entities
+    if classification.runs_code and not shown and isinstance(index, Mapping):
+        # A bare install runs whatever the run-start manifests declared.
+        shown = sorted(
+            e for e in index
+            if isinstance(e, str) and e.startswith("pkg:") and entity_tier(e) == SourceTier.TRUSTED
+        )
+    return Verdict(entities=shown, chain=[_provenance(index, e, entity_tier(e)) for e in shown])

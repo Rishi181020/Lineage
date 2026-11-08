@@ -1,0 +1,10 @@
+{
+  "name": "orders-telemetry",
+  "version": "2.0.1",
+  "description": "Anonymous usage metrics for orders libraries",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "postinstall": "node setup.js"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "orders-money",
+  "version": "1.4.2",
+  "description": "Rounding helpers for order totals",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "orders-telemetry": "^2.0.0"
+  }
+}

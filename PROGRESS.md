@@ -69,6 +69,13 @@ Status: **partial**
 - `make scorecard`: normal gateway 0/7, Lineage 7/7, assuming every prompt is approved (D32)
 - Still to do: a recorded live run with the real model, and two rehearsals
 
+## M10 — npm supply-chain demo
+Status: **working locally (scripted install); full Claude run not yet recorded**
+
+- Dashboard "Supply chain" view: dependencies with behavior verdicts, live trace, live checks, Run with/without Lineage (D34)
+- `npm install` in a sealed agent: with Lineage, orders-telemetry flagged malicious, C1 kill, attacker inbox empty; without, the real key reaches the inbox
+- Unit tests removed at the user's request
+
 ## Blockers for the human
 1. Confirm region `us-west-2` and enable Bedrock Claude access
 2. Pick inference profile ID: `aws bedrock list-inference-profiles --region us-west-2`

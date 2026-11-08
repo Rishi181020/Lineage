@@ -7,26 +7,42 @@
   <link rel="icon" href="data:," />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
-<body>
+<body data-view="supply">
+  <header class="topbar">
+    <a class="brand" href="#supply" aria-label="Lineage home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+      Lineage
+    </a>
+    <nav class="views" aria-label="Views">
+      <button type="button" data-view="supply" aria-current="true">Supply chain</button>
+      <button type="button" data-view="agents" aria-current="false">Agents</button>
+      <button type="button" data-view="attacker" aria-current="false">Attacker</button>
+      <button type="button" data-view="scorecard" aria-current="false">Scorecard</button>
+    </nav>
+    <div class="topbar-end">
+      <label id="model-field" class="model-pick" hidden>
+        <span>Model</span>
+        <select id="model"></select>
+      </label>
+      <span id="sys" class="sys" role="status">Checking…</span>
+    </div>
+  </header>
+
   <form id="auth" class="banner" hidden>
     <label for="token">Lineage rejected the operator token. Paste the value it was started with:</label>
     <input id="token" type="password" autocomplete="off" required />
     <button class="btn" type="submit">Save token</button>
   </form>
   <div id="setup" class="banner problem" role="alert" hidden></div>
+  <div id="notice" class="banner problem" role="alert" hidden></div>
 
   <div class="app">
     <aside class="side">
-      <h1 class="wordmark">Lineage</h1>
-      <nav class="views" aria-label="Views">
-        <button type="button" data-view="agents" aria-current="true">Agents</button>
-        <button type="button" data-view="attacker">Attacker</button>
-        <button type="button" data-view="scorecard">Scorecard</button>
-      </nav>
       <form id="new-agent">
+        <h2>New agent</h2>
         <label for="task">What should the agent do?</label>
         <textarea id="task" rows="4" maxlength="8000" required placeholder="Investigate the open errortrack issues and apply the fixes"></textarea>
         <fieldset class="protection">
@@ -34,10 +50,6 @@
           <label><input type="radio" name="protection" value="lineage" checked /> Lineage</label>
           <label><input type="radio" name="protection" value="baseline" /> Normal gateway only</label>
         </fieldset>
-        <div id="model-field" class="field" hidden>
-          <label for="model">Model</label>
-          <select id="model"></select>
-        </div>
         <p id="workspace" class="hint"></p>
         <button id="start" class="btn primary" type="submit" disabled>Start agent</button>
         <p id="start-error" class="error" role="alert" hidden></p>

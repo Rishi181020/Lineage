@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response
 
 from lineage_core.entities import extract_entities
 from lineage_core.manifests import candidate_entities, is_manifest, mentions_manifest, written_text
+from lineage_core import pkg_verdict
 from lineage_core.models import Decision, RunStatus, SourceTier, Span
 from lineage_core.rules import evaluate
 from lineage_core.trifecta import update_legs
@@ -227,6 +228,8 @@ async def _await_approval(
             "approval_id": approval_id,
             "rule_id": verdict.rule_id,
             "reason": verdict.reason,
+            "entities": verdict.entities,
+            "chain": [item.model_dump(mode="json") if hasattr(item, "model_dump") else item for item in verdict.chain],
             "tool_name": tool,
             "tool_input": tool_input,
         },
@@ -275,6 +278,15 @@ def _handle_agent_output(run, payload: dict[str, Any]) -> Response:
             },
         )
         state.end_run(run.id, RunStatus.FINISHED, stop_agent=False)
+    elif kind == "pkg":
+        # From the behavior monitor npm preloads into dependency scripts (agent-image/watch.js).
+        behavior = {key: str(payload.get(key, ""))[:300] for key in ("package", "phase", "op", "target")}
+        state.publish("pkg_behavior", run.id, behavior)
+        same_package = [
+            e.payload for e in state.store.list_events(run.id)
+            if e.type == "pkg_behavior" and e.payload.get("package") == behavior["package"]
+        ]
+        state.publish("pkg_verdict", run.id, {"package": behavior["package"], **pkg_verdict.verdict(same_package)})
     else:
         raise HTTPException(400, "unknown output kind")
     return Response(content="", media_type="application/json")

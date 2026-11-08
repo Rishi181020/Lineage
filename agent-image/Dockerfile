@@ -9,12 +9,15 @@ COPY lineage-hook /usr/local/bin/lineage-hook
 COPY lineage-agent /usr/local/bin/lineage-agent
 COPY managed-settings.json /etc/claude-code/managed-settings.json
 COPY mcp.json errortrack_mcp.py /etc/lineage/
+COPY watch.js /opt/lineage/watch.js
 COPY --from=fixtures errortrack_issues.json /etc/lineage/errortrack_issues.json
 RUN chmod 0755 /usr/local/bin/lineage-hook /usr/local/bin/lineage-agent \
  && chmod 0644 /etc/claude-code/managed-settings.json \
  && useradd --create-home agent \
  && mkdir -p /workspace \
- && chown agent /workspace
+ && chown agent /workspace \
+ && printf 'fund=false\naudit=false\nupdate-notifier=false\n' > /home/agent/.npmrc \
+ && chown agent /home/agent/.npmrc
 ENV HTTP_PROXY=http://egress:8080 \
     HTTPS_PROXY=http://egress:8080 \
     NO_PROXY=control,modeltap \
@@ -22,6 +25,8 @@ ENV HTTP_PROXY=http://egress:8080 \
     https_proxy=http://egress:8080 \
     no_proxy=control,modeltap \
     NPM_CONFIG_REGISTRY=http://registry.demo/
+# npm preloads the behavior monitor into the scripts it runs; Claude Code itself doesn't load it.
+ENV NPM_CONFIG_NODE_OPTIONS="--require /opt/lineage/watch.js"
 # Non-root, because Claude Code refuses to bypass its own permission prompts as root.
 USER agent
 WORKDIR /workspace

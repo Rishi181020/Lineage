@@ -214,3 +214,39 @@ Status key: **Settled** (don't change without the human) · **Default** (agent m
 ### D33. Planted bug reports reach the agent as a root-owned file — Default
 - **Decision:** The runner copies the issue list into `/etc/lineage/errortrack_issues.json` before the container starts.
 - **Rejected:** An environment variable. The agent could print it with `env`, and that output counts as ordinary workspace content, a second path for the attacker's text that isn't marked untrusted.
+
+### D34. Dependencies are judged by what they do in the sandbox — Default
+- **Decision:**
+  - npm preloads `agent-image/watch.js` (via `NPM_CONFIG_NODE_OPTIONS`) into every script it runs.
+  - It reports credential-file reads, secret env reads, process starts and network connections, each tagged with the package that did it.
+  - `lineage_core/pkg_verdict.py` turns these into clean / suspicious / malicious. Malicious means it read credentials and had a way out.
+  - Nobody reads package code.
+- **Demo:**
+  - `fixtures/demo-repo` depends on `orders-money`, which pulls in `orders-telemetry`.
+  - `orders-telemetry`'s postinstall steals `STAGING_TOKEN` and `~/.npmrc` and posts them to `errortrack.demo`.
+  - The registry stub serves both packages from `stubs/registry/packages/`.
+- **Limit:**
+  - The monitor runs inside the sandbox, so a package can disable or forge its reports.
+  - It only sees Node code. Native binaries and code that clears `NODE_OPTIONS` are invisible to it.
+  - The verdict is evidence, not enforcement. The stand-in key, the C1 tripwire and egress, all outside the sandbox, are what stop the theft.
+
+### D35. Allowed risky actions also say why — Default
+- **Decision:**
+  - An allowed high-risk action's verdict carries its decision entities, each with its trusted source.
+  - A bare `npm install` lists the packages the run-start manifests declared.
+  - The dashboard draws this as a lineage chain on every risky action. For an untrusted source, it quotes the content the name came from.
+- **Why:** The gate was invisible when it let something through, so the "why, not where" idea never showed up in the demo.
+
+### D36. Real malware samples run only through the detonation harness — Settled
+- **Decision:**
+  - `scripts/detonate.py` runs npm samples (.tgz, a .zip with password "infected", or a directory) one per container, in the agent sandbox shape: internal network, no DNS, non-root, no capabilities, no-new-privileges, memory and process limits.
+  - The sample is mounted read-only and unpacked only inside the container.
+  - The run's stand-in key is planted as `STAGING_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `AWS_SECRET_ACCESS_KEY` and in `~/.npmrc`.
+  - Install scripts run, then `require()`.
+  - The report lists monitor behaviors, blocked and allowed egress, and the tripwire.
+- **Guards:** It refuses non-Linux hosts and a sandbox network that isn't internal. Samples are never extracted on the host.
+- **Also:** Egress now records refused HTTPS tunnel requests (`egress_block`, E1), so HTTPS exfil attempts show up instead of vanishing.
+- **Limits:**
+  - Packages whose dependencies aren't in the registry stub fail at `require()`.
+  - Second-stage downloads are blocked, so later stages never run.
+  - DNS-based exfiltration isn't observed, only prevented.

@@ -65,33 +65,76 @@ def analyze_bash(command: str) -> BashAnalysis:
     return BashAnalysis(words=words, used_fallback=fallback, pipe_to_shell=pipe_to_shell)
 
 
+# (ecosystem, command, whether every argument is a package). Installers take a list of
+# packages; runners (npx, uvx, dlx) take one package and pass the rest to it as arguments.
+_INSTALLERS = (
+    ("npm", r"\bnpm\s+(?:i|install|add)\b", True),
+    ("npm", r"\bpnpm\s+(?:add|i|install)\b", True),
+    ("npm", r"\byarn\s+add\b", True),
+    ("npm", r"\bbun\s+(?:add|install|i)\b", True),
+    ("npm", r"\bnpx\b", False),
+    ("npm", r"\bnpm\s+exec\b", False),
+    ("npm", r"\bpnpm\s+dlx\b", False),
+    ("npm", r"\byarn\s+dlx\b", False),
+    ("npm", r"\bbunx\b", False),
+    ("pypi", r"\bpip3?\s+install\b", True),
+    ("pypi", r"\buv\s+(?:add|pip\s+install)\b", True),
+    ("pypi", r"\bpoetry\s+add\b", True),
+    ("pypi", r"\bpipx\s+install\b", True),
+    ("pypi", r"\buvx\b", False),
+    ("pypi", r"\bpipx\s+run\b", False),
+)
+_COMMAND_END = re.compile(r"&&|\|\||[;|\n)]")
+# A shell redirect: `2>&1`, `>log`, `2>`, `<in`, `&>out`. Digits right before > or < are a file
+# descriptor, never a package name.
+_REDIRECT = re.compile(r"^(?:\d*(?:>>?|<|>&|<&)|&>)")
+_REDIRECT_ALONE = re.compile(r"^(?:\d*(?:>>?|<)|&>)$")
+_VALUE_FLAGS = {
+    "-r", "--requirement", "-c", "--constraint", "-i", "--index-url", "--extra-index-url",
+    "-f", "--find-links", "-t", "--target", "--registry", "--prefix", "-w", "--workspace", "--cache",
+}
+_NAME_RE = re.compile(r"^[@a-z0-9][\w@./=<>!~\[\],-]*$", re.I)
+
+
+def _package_args(text: str, start: int) -> list[str]:
+    """The package arguments after an install or run verb, up to the end of that command."""
+    segment = _COMMAND_END.split(text[start:], maxsplit=1)[0]
+    try:
+        tokens = shlex.split(segment, posix=True)
+    except ValueError:
+        tokens = segment.split()
+    names: list[str] = []
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+            continue
+        if _REDIRECT.match(token):
+            skip = bool(_REDIRECT_ALONE.match(token))  # `2> file`: the file is the next word
+            continue
+        if token.startswith("-"):
+            skip = token in _VALUE_FLAGS
+            continue
+        if _NAME_RE.match(token):
+            names.append(token)
+    return names
+
+
 def _package_entities(text: str) -> set[str]:
     found: set[str] = set()
     for match in _SCOPED_NPM_RE.finditer(text):
         found.add(f"pkg:npm:{_clean(match.group(1))}")
 
-    npm_patterns = [
-        r"\bnpx(?:\s+--?[^\s]+\s+)*\s+([@a-z0-9][\w@./-]*)",
-        r"\bnpm\s+(?:i|install|add|exec)\s+(?:--?[^\s]+\s+)*([@a-z0-9][\w@./-]*)",
-        r"\bpnpm\s+(?:add|dlx)\s+(?:--?[^\s]+\s+)*([@a-z0-9][\w@./-]*)",
-        r"\byarn\s+(?:add|dlx)\s+(?:--?[^\s]+\s+)*([@a-z0-9][\w@./-]*)",
-        r"\bbunx\s+(?:--?[^\s]+\s+)*([@a-z0-9][\w@./-]*)",
-    ]
-    for pattern in npm_patterns:
+    for ecosystem, pattern, every_arg in _INSTALLERS:
         for match in re.finditer(pattern, text, re.I):
-            name = re.split(r"(?<!^)[@=]", _clean(match.group(1)), maxsplit=1)[0]
-            found.add(f"pkg:npm:{name}")
-
-    pypi_patterns = [
-        r"\bpip3?\s+install\s+(?:--?[^\s]+\s+)*([a-z0-9][\w.-]*)",
-        r"\buv\s+add\s+(?:--?[^\s]+\s+)*([a-z0-9][\w.-]*)",
-        r"\buvx\s+(?:--?[^\s]+\s+)*([a-z0-9][\w.-]*)",
-        r"\bpipx\s+(?:run|install)\s+(?:--?[^\s]+\s+)*([a-z0-9][\w.-]*)",
-    ]
-    for pattern in pypi_patterns:
-        for match in re.finditer(pattern, text, re.I):
-            name = re.split(r"[<>=!~\[]", _clean(match.group(1)), maxsplit=1)[0]
-            found.add(f"pkg:pypi:{name}")
+            args = _package_args(text, match.end())
+            for name in args if every_arg else args[:1]:
+                if ecosystem == "npm":
+                    name = re.split(r"(?<!^)[@=]", _clean(name), maxsplit=1)[0]
+                else:
+                    name = re.split(r"[<>=!~\[;]", _clean(name), maxsplit=1)[0]
+                if name:
+                    found.add(f"pkg:{ecosystem}:{name}")
     return found
 
 

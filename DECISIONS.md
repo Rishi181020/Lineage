@@ -253,3 +253,12 @@ Status key: **Settled** (don't change without the human) · **Default** (agent m
 
 ### D37. Region us-east-1 — Settled (closes D16, replaces D19)
 - **Decision:** The team's AWS account runs in `us-east-1`, so it's the default everywhere: CDK, compose, model tap, Secrets Manager, DynamoDB, KMS and the docs. `us.anthropic.*` inference profiles are US cross-region, so the same model IDs work.
+
+### D38. Every package argument is judged, and shell redirects are never package names — Default
+- **Found in the first real-Claude run:**
+  - `npm install 2>&1 | tail -5` was read as installing a package named `2`, which caused a false L2 approval prompt.
+  - The parser took only the first package after an install verb, so in `npm install lodash evil-pkg` the second name was never judged. That was a bypass whenever the first name was trusted.
+- **Decision:**
+  - Installers (`npm i/install/add`, `pnpm add`, `yarn add`, `bun add`, `pip install`, `uv add`, `poetry add`, `pipx install`) contribute every package argument up to the end of that command.
+  - Runners (`npx`, `npm exec`, `dlx`, `bunx`, `uvx`, `pipx run`) contribute only their first argument; the rest are the program's own arguments.
+  - Flags, values of flags such as `-r`, `--registry` and `-w`, and redirects (`2>&1`, `> log`, `2> err`) are skipped.

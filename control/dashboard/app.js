@@ -146,23 +146,62 @@
     $("#start").textContent = "Start agent";
   });
 
-  async function refresh() {
+  // Events per run, fetched incrementally: each refresh asks only for what came after the last seq.
+  const eventCache = new Map();
+  function eventsFor(runId) {
+    const cached = eventCache.get(runId) || { list: [], last: 0, pending: null };
+    eventCache.set(runId, cached);
+    if (!cached.pending) {
+      cached.pending = api(`/admin/runs/${runId}/events?after=${cached.last}`)
+        .then((fresh) => {
+          cached.list = cached.list.concat(fresh);
+          if (fresh.length) cached.last = fresh[fresh.length - 1].seq;
+          return cached.list;
+        })
+        .finally(() => { cached.pending = null; });
+    }
+    return cached.pending;
+  }
+
+  let inboxAt = 0;
+  async function load() {
     S.runs = (await api("/admin/runs")).reverse();
     if (!S.selected && S.runs.length) S.selected = S.runs[0].run_id;
     const jobs = [];
-    if (S.view === "agents" || S.view === "supply") jobs.push(S.selected ? api(`/admin/runs/${S.selected}/events`).then((e) => { S.events = e; }) : Promise.resolve((S.events = [])));
+    if (S.view === "agents" || S.view === "supply") jobs.push(S.selected ? eventsFor(S.selected).then((e) => { S.events = e; }) : Promise.resolve((S.events = [])));
     if (S.view === "supply") {
       // The before/after compares the latest run of each kind (S.runs is newest first).
       const latest = (kind) => S.runs.find((r) => (r.protection || "lineage") === kind);
       jobs.push(Promise.all(["baseline", "lineage"].map(async (kind) => {
         const run = latest(kind);
-        return [kind, run ? { run, events: await api(`/admin/runs/${run.run_id}/events`) } : null];
+        return [kind, run ? { run, events: await eventsFor(run.run_id) } : null];
       })).then((pairs) => { S.compare = Object.fromEntries(pairs); }));
     }
-    if (S.view !== "scorecard") jobs.push(api("/admin/attacker/inbox").then((i) => { S.inbox = i; }).catch(() => { S.inbox = null; }));
+    // The inbox comes from another service through control; every 2s is plenty.
+    if (S.view !== "scorecard") {
+      const wait = 2000 - (Date.now() - inboxAt);
+      if (wait <= 0) {
+        inboxAt = Date.now();
+        jobs.push(api("/admin/attacker/inbox").then((i) => { S.inbox = i; }).catch(() => { S.inbox = null; }));
+      } else {
+        setTimeout(queueRefresh, wait + 50);  // catch up once the window passes, so the inbox never stays stale
+      }
+    }
     if (S.view === "attacker") jobs.push(api("/admin/attacker/issues").then((i) => { S.issues = i; }));
     await Promise.all(jobs);
     render();
+  }
+
+  // One refresh at a time; anything asked for meanwhile collapses into a single follow-up.
+  let loading = null;
+  let again = false;
+  function refresh() {
+    if (loading) { again = true; return loading; }
+    loading = load().finally(() => {
+      loading = null;
+      if (again) { again = false; refresh().catch(showError); }
+    });
+    return loading;
   }
 
   function pendingApprovals(events) {
@@ -804,7 +843,7 @@
     setTimeout(() => {
       refreshQueued = false;
       refresh().catch(showError);
-    }, 150);
+    }, 250);
   }
 
   // EventSource can't send an Authorization header, so the stream is read with fetch.

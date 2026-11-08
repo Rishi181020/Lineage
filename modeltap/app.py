@@ -20,7 +20,7 @@ from lineage_core.tokens import verify_local
 
 app = FastAPI(title="Lineage Model Tap")
 
-REGION = os.environ.get("LINEAGE_REGION", "us-west-2")
+REGION = os.environ.get("LINEAGE_REGION", "us-east-1")
 CONTROL = os.environ.get("LINEAGE_CONTROL_INTERNAL", "http://172.30.0.10:8002")
 SERVICE_TOKEN = os.environ.get("LINEAGE_SERVICE_TOKEN", "lineage-service-dev")
 SIGNING_KEY = os.environ.get(

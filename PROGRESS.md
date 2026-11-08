@@ -77,7 +77,7 @@ Status: **working locally (scripted install); full Claude run not yet recorded**
 - Unit tests removed at the user's request
 
 ## Blockers for the human
-1. Confirm region `us-west-2` and enable Bedrock Claude access
-2. Pick inference profile ID: `aws bedrock list-inference-profiles --region us-west-2`
+1. Confirm region `us-east-1` and enable Bedrock Claude access
+2. Pick inference profile ID: `aws bedrock list-inference-profiles --region us-east-1`
 3. Run one live agent with Bedrock (this Mac has `~/.aws` credentials; the Nov 7 hardening work made no AWS calls)
 4. `cdk deploy` + SSM into the host for the live demo

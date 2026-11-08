@@ -15,7 +15,7 @@ services:
     ports:
       - "127.0.0.1:8001:8001"
     environment:
-      LINEAGE_REGION: ${LINEAGE_REGION:-us-west-2}
+      LINEAGE_REGION: ${LINEAGE_REGION:-us-east-1}
       LINEAGE_MODE: local
       LINEAGE_POLICY_PATH: /app/policy/default.yaml
       LINEAGE_LOCAL_SECRETS_PATH: /app/.lineage/secrets.yaml
@@ -65,7 +65,7 @@ services:
       context: .
       dockerfile: modeltap/Dockerfile
     environment:
-      LINEAGE_REGION: ${LINEAGE_REGION:-us-west-2}
+      LINEAGE_REGION: ${LINEAGE_REGION:-us-east-1}
       LINEAGE_MODE: ${LINEAGE_MODE:-local}
       LINEAGE_CONTROL_INTERNAL: http://172.30.0.10:8002
       LINEAGE_SERVICE_TOKEN: ${LINEAGE_SERVICE_TOKEN:-lineage-service-dev}

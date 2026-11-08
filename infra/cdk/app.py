@@ -9,7 +9,7 @@ LineageStack(
     "LineageStack",
     env=cdk.Environment(
         account=app.node.try_get_context("account"),
-        region=app.node.try_get_context("region") or "us-west-2",
+        region=app.node.try_get_context("region") or "us-east-1",
     ),
 )
 app.synth()

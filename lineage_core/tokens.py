@@ -47,7 +47,7 @@ def verify_local(token: str, key: str) -> dict[str, Any]:
 class KmsEs256Tokens:
     """AWS ES256 token adapter reserved for the M4 KMS implementation."""
 
-    def __init__(self, key_id: str, region: str = "us-west-2") -> None:
+    def __init__(self, key_id: str, region: str = "us-east-1") -> None:
         self.key_id = key_id
         self.region = region
 

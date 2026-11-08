@@ -141,6 +141,10 @@ class LineageStack(Stack):
             "curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 "
             "-o /usr/local/lib/docker/cli-plugins/docker-compose",
             "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose",
+            # The agent image build uses additional_contexts, which needs BuildKit via buildx.
+            "curl -fsSL https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 "
+            "-o /usr/local/lib/docker/cli-plugins/docker-buildx",
+            "chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx",
             "curl -LsSf https://astral.sh/uv/install.sh | sh",
             "usermod -aG docker ssm-user || true",
             "echo 'Lineage host bootstrap complete' > /var/log/lineage-bootstrap.txt",

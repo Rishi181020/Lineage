@@ -57,7 +57,7 @@ def seed_aws(region: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["local", "aws"], default="local")
-    parser.add_argument("--region", default="us-west-2")
+    parser.add_argument("--region", default="us-east-1")
     parser.add_argument("--path", default=".lineage")
     args = parser.parse_args()
     if args.mode == "local":

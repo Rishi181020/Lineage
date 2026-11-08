@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     )
 
     mode: Literal["local", "aws"] = "local"
-    region: str = "us-west-2"
+    region: str = "us-east-1"
     model_id: str = ""
     operator_token_path: Path = Path(".lineage/operator-token")
     service_token_path: Path = Path(".lineage/service-token")

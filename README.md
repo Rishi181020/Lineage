@@ -92,7 +92,7 @@ Simon Willison's [lethal trifecta](https://simonwillison.net/2025/Jun/16/the-let
 
 ## Quick start
 
-**Requirements:** Docker Desktop, [`uv`](https://docs.astral.sh/uv/), and AWS credentials in `~/.aws` with Claude enabled on Amazon Bedrock in `us-west-2`.
+**Requirements:** Docker Desktop, [`uv`](https://docs.astral.sh/uv/), and AWS credentials in `~/.aws` with Claude enabled on Amazon Bedrock in `us-east-1`.
 
 ```sh
 docker compose up --build -d
@@ -260,7 +260,7 @@ As of Nov 7, 2026. [`PROGRESS.md`](PROGRESS.md) is the live record.
 ```sh
 cd infra/cdk
 pip install -r requirements.txt
-cdk bootstrap aws://$ACCOUNT/us-west-2
+cdk bootstrap aws://$ACCOUNT/us-east-1
 cdk deploy
 # then on the instance, via SSM Session Manager:
 #   scripts/bootstrap_host.sh && scripts/seed_secrets.py --mode aws

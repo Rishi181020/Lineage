@@ -9,7 +9,7 @@ from .base import SecretsBackend
 
 
 class SecretsManagerSecrets(SecretsBackend):
-    def __init__(self, region: str = "us-west-2", client: Any | None = None) -> None:
+    def __init__(self, region: str = "us-east-1", client: Any | None = None) -> None:
         self.client = client or boto3.client("secretsmanager", region_name=region)
 
     def get(self, secret_ref: str) -> str:

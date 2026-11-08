@@ -16,7 +16,7 @@ class DynamoStore(MemoryStore):
         runs_table: str = "lineage-runs",
         events_table: str = "lineage-events",
         entities_table: str = "lineage-entities",
-        region: str = "us-west-2",
+        region: str = "us-east-1",
         resource: Any | None = None,
     ) -> None:
         super().__init__()

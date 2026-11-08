@@ -250,3 +250,6 @@ Status key: **Settled** (don't change without the human) · **Default** (agent m
   - Packages whose dependencies aren't in the registry stub fail at `require()`.
   - Second-stage downloads are blocked, so later stages never run.
   - DNS-based exfiltration isn't observed, only prevented.
+
+### D37. Region us-east-1 — Settled (closes D16, replaces D19)
+- **Decision:** The team's AWS account runs in `us-east-1`, so it's the default everywhere: CDK, compose, model tap, Secrets Manager, DynamoDB, KMS and the docs. `us.anthropic.*` inference profiles are US cross-region, so the same model IDs work.
